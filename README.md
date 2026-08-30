@@ -2,7 +2,7 @@
 
 Skylark Signal is a hosted-ready conversational BI workspace for live, read-only monday.com Deals and Work Orders data. It answers five evaluator archetypes with deterministic arithmetic, explicit source counts, and visible data-quality exclusions; the language model only writes bounded qualitative context.
 
-**Live application:** **https://skylark-signal-lac.vercel.app**  
+**Live application:** **https://skylark-signal-lac.vercel.app**
 **Live API:** **https://skylark-signal-api.vercel.app** (`/health` stays degraded until the four production settings below are supplied)
 
 **Source repository:** **https://github.com/9059Rohith/skylark**
