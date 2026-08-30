@@ -3,7 +3,7 @@ from zoneinfo import ZoneInfo
 
 import pytest
 
-from app.agent.routing import Intent, parse_intent, resolve_quarter
+from app.agent.routing import Intent, parse_intent, resolve_period, resolve_quarter
 
 
 @pytest.mark.parametrize(
@@ -86,3 +86,17 @@ def test_genuinely_unresolved_business_scope_asks_one_targeted_question() -> Non
         "Which view do you need: pipeline health, won deals without work orders, "
         "work-order completion, data quality, or a leadership update?"
     )
+
+
+def test_this_month_resolves_deterministically_from_injected_clock() -> None:
+    """Month scope must not depend on when or where the test process runs."""
+    period = resolve_period(
+        "this month",
+        now=datetime(2026, 8, 30, 11, 0, tzinfo=ZoneInfo("Asia/Kolkata")),
+        fiscal_year_start_month=4,
+    )
+
+    assert period is not None
+    assert period.start.isoformat() == "2026-08-01"
+    assert period.end.isoformat() == "2026-08-31"
+    assert period.label == "August 2026"

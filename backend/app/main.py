@@ -1,6 +1,7 @@
 """FastAPI application factory and bounded SSE chat endpoint."""
 
 from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
 from typing import Any, Protocol
 
 from fastapi import FastAPI, HTTPException
@@ -15,18 +16,14 @@ from app.monday import GraphQLMondayClient
 
 
 class StreamingAgent(Protocol):
-    def stream_agent(
-        self, message: str, session_id: str, history: list[dict[str, str]]
-    ) -> AsyncIterator[SSEEvent]: ...
+    def stream_agent(self, message: str, session_id: str) -> AsyncIterator[SSEEvent]: ...
 
 
 class _UnavailableAgent:
     def __init__(self, message: str) -> None:
         self.message = message
 
-    async def stream_agent(
-        self, message: str, session_id: str, history: list[dict[str, str]]
-    ) -> AsyncIterator[SSEEvent]:
+    async def stream_agent(self, message: str, session_id: str) -> AsyncIterator[SSEEvent]:
         yield ErrorEvent(code="configuration", message=self.message)
 
 
@@ -35,7 +32,10 @@ def _default_agent(settings: Settings) -> StreamingAgent:
         return _UnavailableAgent("monday.com access is not configured on this server.")
     monday = GraphQLMondayClient(settings.monday_api_token)
     claude = ClaudeService(settings) if settings.anthropic_api_key else None
-    return AgentRunner(AgentDependencies(monday=monday, settings=settings, claude=claude))
+    return AgentRunner(
+        AgentDependencies(monday=monday, settings=settings, claude=claude),
+        owns_dependencies=True,
+    )
 
 
 def _sse(event: Any) -> str:
@@ -48,8 +48,26 @@ def create_app(
 ) -> FastAPI:
     """Create an injectable app so tests and local demos need no live credentials."""
     active_settings = settings or Settings()
-    active_agent = agent or _default_agent(active_settings)
-    application = FastAPI(title="Skylark Signal", version="0.1.0")
+    owns_agent = agent is None
+    active_agent = agent if agent is not None else _default_agent(active_settings)
+
+    @asynccontextmanager
+    async def lifespan(application: FastAPI) -> AsyncIterator[None]:
+        application.state.runtime_missing = []
+        if owns_agent and hasattr(active_agent, "warmup"):
+            try:
+                await active_agent.warmup()
+            except Exception:
+                application.state.runtime_missing = ["MONDAY_SCHEMA_ACCESS"]
+        try:
+            yield
+        finally:
+            if owns_agent and hasattr(active_agent, "aclose"):
+                await active_agent.aclose()
+
+    application = FastAPI(
+        title="Skylark Signal", version="0.1.0", lifespan=lifespan
+    )
     application.add_middleware(
         CORSMiddleware,
         allow_origins=list(active_settings.cors_allow_origins),
@@ -59,27 +77,29 @@ def create_app(
     )
 
     @application.get("/health")
-    async def health() -> dict[str, str]:
-        return {"status": "ok"}
+    async def health() -> dict[str, object]:
+        missing = []
+        if not active_settings.monday_api_token:
+            missing.append("MONDAY_API_TOKEN")
+        if not active_settings.deals_board_id:
+            missing.append("MONDAY_DEALS_BOARD_ID")
+        if not active_settings.work_orders_board_id:
+            missing.append("MONDAY_WORK_ORDERS_BOARD_ID")
+        if not active_settings.anthropic_api_key:
+            missing.append("ANTHROPIC_API_KEY")
+        missing.extend(getattr(application.state, "runtime_missing", []))
+        return {"status": "degraded" if missing else "ready", "missing": missing}
 
     @application.post("/chat")
     async def chat(request: ChatRequest) -> StreamingResponse:
         if len(request.message) > active_settings.max_message_length:
             raise HTTPException(status_code=422, detail="message exceeds configured limit")
-        if len(request.history) > active_settings.max_history_messages:
-            raise HTTPException(status_code=422, detail="history exceeds configured limit")
-        if any(
-            len(item.content) > active_settings.max_message_length
-            for item in request.history
-        ):
-            raise HTTPException(status_code=422, detail="history message exceeds configured limit")
 
         async def events() -> AsyncIterator[str]:
             try:
                 async for event in active_agent.stream_agent(
                     request.message,
                     request.session_id,
-                    [item.model_dump() for item in request.history],
                 ):
                     yield _sse(event)
             except Exception:

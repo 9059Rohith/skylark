@@ -17,6 +17,10 @@ from app.monday import (
 )
 
 
+def sid(index: int) -> str:
+    return f"00000000-0000-4000-8000-{index:012d}"
+
+
 DEAL_SCHEMA = BoardSchema(
     board_id="101",
     name="Deals",
@@ -122,6 +126,44 @@ class MissingScopeDateMonday(FakeMonday):
         )
 
 
+class PriorMonthWorkOrderMonday(FakeMonday):
+    async def get_board_items(self, board_id: str) -> BoardItemsResult:
+        result = await super().get_board_items(board_id)
+        if board_id != "202":
+            return result
+        item = result.items[0].model_copy(
+            update={
+                "values": {
+                    **result.items[0].values,
+                    "date8": "2026-07-21",
+                }
+            }
+        )
+        return result.model_copy(update={"items": (item,)})
+
+
+class PriorMonthDealMonday(FakeMonday):
+    async def get_board_items(self, board_id: str) -> BoardItemsResult:
+        result = await super().get_board_items(board_id)
+        if board_id != "101":
+            return result
+        prior = result.items[1].model_copy(
+            update={"values": {**result.items[1].values, "date11": "2026-07-20"}}
+        )
+        return result.model_copy(update={"items": (result.items[0], prior)})
+
+
+class PartialPagesMonday(FakeMonday):
+    async def get_board_items(self, board_id: str) -> BoardItemsResult:
+        result = await super().get_board_items(board_id)
+        return result.model_copy(
+            update={
+                "partial": True,
+                "caveats": ("Later page failed: bearer super-secret-token",),
+            }
+        )
+
+
 class FakeClaude:
     configured = True
 
@@ -137,14 +179,14 @@ class FakeClaude:
     async def stream_synthesis(self, payload: dict[str, Any]) -> AsyncIterator[str]:
         self.synthesis_calls += 1
         self.synthesis_payload = payload
-        yield "Pipeline "
-        yield "is visible."
+        yield "Pipeline composition is concentrated. "
+        yield "Execution attention remains important."
 
 
 def settings() -> Settings:
     return Settings(
-        deals_board_id="101",
-        work_orders_board_id="202",
+        MONDAY_DEALS_BOARD_ID="101",
+        MONDAY_WORK_ORDERS_BOARD_ID="202",
         anthropic_api_key=None,
         deterministic_synthesis_fallback=True,
         fiscal_year_start_month=4,
@@ -206,8 +248,8 @@ async def test_checkpointer_preserves_intent_for_sector_follow_up() -> None:
     """A new invocation with the same thread must retain conversational scope."""
     runner = AgentRunner(dependencies(FakeMonday()))
 
-    await runner.run_agent("How healthy is our pipeline this quarter?", "thread-7")
-    follow_up = await runner.run_agent("Break that down by sector", "thread-7")
+    await runner.run_agent("How healthy is our pipeline this quarter?", sid(7))
+    follow_up = await runner.run_agent("Break that down by sector", sid(7))
 
     assert follow_up["intent"] == "pipeline_health"
     assert follow_up["breakdown_by_sector"] is True
@@ -215,31 +257,106 @@ async def test_checkpointer_preserves_intent_for_sector_follow_up() -> None:
 
 
 @pytest.mark.asyncio
+async def test_sector_clarification_direct_answer_reuses_pending_context() -> None:
+    """A direct option answer must resolve the pending sector instead of losing intent."""
+    monday = FakeMonday()
+    runner = AgentRunner(dependencies(monday))
+    await runner.run_agent(
+        "Show pipeline for healthcare or energy", sid(8)
+    )
+
+    result = await runner.run_agent("Healthcare", sid(8))
+
+    assert result["intent"] == "pipeline_health"
+    assert result["sector"] == "Healthcare"
+    assert result["clarification_question"] is None
+    assert result["analysis"]["metrics"]["deal_count"] == 0
+    assert monday.max_active_fetches == 1
+
+
+@pytest.mark.asyncio
+async def test_data_quality_with_period_asks_one_date_scope_clarification() -> None:
+    """Missing close dates cannot be assigned to a close-date period without guessing."""
+    monday = FakeMonday()
+    result = await AgentRunner(dependencies(monday)).run_agent(
+        "How many deals are missing close dates this month?", sid(9)
+    )
+
+    assert result["node_trace"] == ["parse_intent", "clarify"]
+    assert result["answer"] == (
+        "Which date field should define the requested period for this data-quality check?"
+    )
+    assert monday.max_active_fetches == 0
+
+
+@pytest.mark.asyncio
+async def test_cross_board_period_scopes_won_deals_but_keeps_all_work_order_evidence() -> None:
+    """Filtering evidence work orders can falsely classify a won deal as unfulfilled."""
+    result = await AgentRunner(dependencies(PriorMonthWorkOrderMonday())).run_agent(
+        "Which won deals have no work orders this month?", sid(10)
+    )
+
+    assert result["analysis"]["metrics"]["missing_work_order_count"] == 0
+    assert result["analysis"]["quality"]["total_rows"] == 3
+    assert result["analysis"]["quality"]["included_rows"] == 2
+
+
+@pytest.mark.asyncio
+async def test_completion_period_scopes_work_orders_by_completion_date() -> None:
+    """Completion-time questions must apply month scope to completion dates."""
+    result = await AgentRunner(dependencies(PriorMonthWorkOrderMonday())).run_agent(
+        "What is work order completion time this month?", sid(11)
+    )
+
+    assert result["analysis"]["metrics"]["completed_work_order_count"] == 0
+    assert result["analysis"]["quality"]["exclusions"][
+        "period_scope:outside_period"
+    ] == 1
+
+
+@pytest.mark.asyncio
+async def test_pipeline_month_scope_filters_deals_by_close_date() -> None:
+    """Pipeline periods are defined by deal close date, with exclusions traceable."""
+    result = await AgentRunner(dependencies(PriorMonthDealMonday())).run_agent(
+        "How healthy is the pipeline this month?", sid(36)
+    )
+
+    assert result["analysis"]["metrics"]["total_pipeline_value_inr"] == "1000000"
+    assert result["analysis"]["quality"]["exclusions"][
+        "period_scope:outside_period"
+    ] == 1
+
+
+@pytest.mark.asyncio
 async def test_public_run_agent_interface_reuses_initialized_checkpointed_runner() -> None:
     """The two-argument public interface must preserve its session checkpoint."""
     await run_agent(
         "How healthy is our pipeline this quarter?",
-        "public-thread-1",
+        sid(12),
         dependencies=dependencies(FakeMonday()),
     )
 
-    follow_up = await run_agent("Break that down by sector", "public-thread-1")
+    follow_up = await run_agent("Break that down by sector", sid(12))
 
     assert follow_up["intent"] == "pipeline_health"
     assert follow_up["breakdown_by_sector"] is True
 
 
 @pytest.mark.asyncio
-async def test_configured_claude_is_used_by_reasoning_and_synthesis_nodes() -> None:
-    """Silently bypassing a configured Claude client violates the reasoning contract."""
+async def test_deterministic_routing_stays_authoritative_when_claude_is_configured() -> None:
+    """Claude must not override a supported route already resolved deterministically."""
     claude = FakeClaude()
     runner = AgentRunner(dependencies(FakeMonday(), claude))
 
-    result = await runner.run_agent("How healthy is our pipeline?", "claude-1")
+    result = await runner.run_agent("How healthy is our pipeline?", sid(13))
 
-    assert claude.intent_calls == 1
+    assert claude.intent_calls == 0
     assert claude.synthesis_calls == 1
-    assert result["answer"] == "Pipeline is visible."
+    assert result["answer"].startswith("Total pipeline is INR 21000000")
+    assert "Pipeline composition is concentrated." in result["answer"]
+    assert result["answer"].endswith(
+        "Material caveat: no row-level caveat affected the aggregate."
+    )
     assert set(claude.synthesis_payload or {}) == {
         "intent",
         "period",
@@ -257,15 +374,16 @@ async def test_runner_streams_real_synthesis_deltas_from_langgraph_custom_mode()
 
     events = [
         event
-        async for event in runner.stream_agent(
-            "How healthy is our pipeline?", "stream-1", []
-        )
+        async for event in runner.stream_agent("How healthy is our pipeline?", sid(14))
     ]
 
-    assert [event.token for event in events if event.event == "token"] == [
-        "Pipeline ",
-        "is visible.",
-    ]
+    streamed_answer = "".join(
+        event.token for event in events if event.event == "token"
+    )
+    assert streamed_answer.startswith("Total pipeline is INR 21000000")
+    assert streamed_answer.endswith(
+        "Material caveat: no row-level caveat affected the aggregate."
+    )
     source_event = next(event for event in events if event.event == "sources")
     assert source_event.sources[0].item_count == 2
     assert events[-1].event == "done"
@@ -273,10 +391,55 @@ async def test_runner_streams_real_synthesis_deltas_from_langgraph_custom_mode()
 
 
 @pytest.mark.asyncio
+async def test_claude_routing_is_used_only_for_unresolved_intent_and_errors_fall_back() -> None:
+    """An LLM routing failure must preserve the deterministic clarification path."""
+
+    class RoutingClaude(FakeClaude):
+        async def parse_intent(self, message: str, context: dict[str, Any]) -> Any:
+            self.intent_calls += 1
+            return {"intent": "data_quality"}
+
+    routed_claude = RoutingClaude()
+    routed = await AgentRunner(dependencies(FakeMonday(), routed_claude)).run_agent(
+        "How are things looking?", sid(17)
+    )
+    assert routed["intent"] == "data_quality"
+    assert routed_claude.intent_calls == 1
+
+    class FailingRoutingClaude(FakeClaude):
+        async def parse_intent(self, message: str, context: dict[str, Any]) -> Any:
+            raise RuntimeError("upstream prompt failure")
+
+    fallback = await AgentRunner(
+        dependencies(FakeMonday(), FailingRoutingClaude())
+    ).run_agent("How are things looking?", sid(18))
+    assert fallback["node_trace"] == ["parse_intent", "clarify"]
+
+
+@pytest.mark.asyncio
+async def test_unvalidated_claude_numbers_are_not_emitted() -> None:
+    """Model-invented numbers must not escape the deterministic public frame."""
+
+    class HallucinatingClaude(FakeClaude):
+        async def stream_synthesis(self, payload: dict[str, Any]) -> AsyncIterator[str]:
+            yield "There are 999 hidden deals. Only one sentence."
+
+    result = await AgentRunner(
+        dependencies(FakeMonday(), HallucinatingClaude())
+    ).run_agent("How healthy is the pipeline?", sid(19))
+
+    assert "999" not in result["answer"]
+    assert result["answer"].startswith("Total pipeline is INR 21000000")
+    assert result["answer"].endswith(
+        "Material caveat: no row-level caveat affected the aggregate."
+    )
+
+
+@pytest.mark.asyncio
 async def test_quarter_scope_exclusions_remain_in_quality_accounting() -> None:
     """Filtering before analysis must not make undated source rows disappear silently."""
     result = await AgentRunner(dependencies(MissingScopeDateMonday())).run_agent(
-        "How healthy is our pipeline this quarter?", "scope-quality-1"
+        "How healthy is our pipeline this quarter?", sid(15)
     )
 
     assert result["analysis"]["quality"]["total_rows"] == 3
@@ -289,12 +452,30 @@ async def test_quarter_scope_exclusions_remain_in_quality_accounting() -> None:
 async def test_leadership_quality_footnote_includes_period_scope_exclusions() -> None:
     """The draft footnote must use the same quality denominator as its headline."""
     result = await AgentRunner(dependencies(MissingScopeDateMonday())).run_agent(
-        "Draft the leadership update for this quarter", "leadership-scope-1"
+        "Draft the leadership update for this quarter", sid(16)
     )
 
     assert "1 of 3 pipeline rows were excluded" in result["leadership_update"][
         "quality_footnote"
     ]
+    assert result["leadership_update"]["quality"]["sector"]["total_rows"] == 3
+    assert result["leadership_update"]["quality"]["gaps"]["total_rows"] == 4
+
+
+@pytest.mark.asyncio
+async def test_caveats_event_always_carries_answer_quality_even_without_prose_caveats() -> None:
+    """A clean dataset still needs its complete denominator and inclusion report."""
+    events = [
+        event
+        async for event in AgentRunner(dependencies(FakeMonday())).stream_agent(
+            "How healthy is the pipeline?", sid(35)
+        )
+    ]
+
+    caveats = next(event for event in events if event.event == "caveats")
+    assert caveats.caveats == []
+    assert caveats.quality.total_rows == 2
+    assert caveats.quality.included_rows == 2
 
 
 @pytest.mark.asyncio
@@ -309,7 +490,7 @@ async def test_every_required_archetype_reaches_its_deterministic_analysis() -> 
     ]
     for index, (message, metric) in enumerate(cases):
         result = await AgentRunner(dependencies(FakeMonday())).run_agent(
-            message, f"archetype-{index}"
+            message, sid(20 + index)
         )
 
         assert metric in result["analysis"]["metrics"]
@@ -326,7 +507,7 @@ async def test_ambiguous_sector_stops_at_single_clarification_node() -> None:
     runner = AgentRunner(dependencies(monday))
 
     result = await runner.run_agent(
-        "Show pipeline for healthcare or energy", "clarify-1"
+        "Show pipeline for healthcare or energy", sid(30)
     )
 
     assert result["node_trace"] == ["parse_intent", "clarify"]
@@ -342,7 +523,7 @@ async def test_streamed_clarification_contains_one_visible_question() -> None:
     events = [
         event
         async for event in runner.stream_agent(
-            "Show pipeline for healthcare or energy", "clarify-stream-1", []
+            "Show pipeline for healthcare or energy", sid(31)
         )
     ]
 
@@ -352,8 +533,8 @@ async def test_streamed_clarification_contains_one_visible_question() -> None:
 
 
 @pytest.mark.asyncio
-async def test_partial_board_auth_failure_keeps_sources_and_clean_caveat() -> None:
-    """One inaccessible board must not erase usable data or expose transport details."""
+async def test_required_cross_board_auth_failure_emits_error_without_false_metrics() -> None:
+    """A failed required board must never become empty evidence and yield false metrics."""
 
     class PartialMonday(FakeMonday):
         async def get_board_schema(self, board_id: str) -> BoardSchema:
@@ -368,17 +549,33 @@ async def test_partial_board_auth_failure_keeps_sources_and_clean_caveat() -> No
     events = [
         event
         async for event in AgentRunner(dependencies(PartialMonday())).stream_agent(
-            "Which won deals have no work orders?", "partial-1", []
+            "Which won deals have no work orders?", sid(32)
+        )
+    ]
+
+    assert events[-1].event == "error"
+    assert events[-1].code == "required_source_unavailable"
+    assert "authentication failed" in events[-1].message
+    assert "bearer-secret-value" not in events[-1].message
+    assert not any(event.event in {"token", "done"} for event in events)
+
+
+@pytest.mark.asyncio
+async def test_single_board_partial_pages_compute_with_sanitized_partial_provenance() -> None:
+    """Usable page-one rows may compute, but partial provenance must be explicit and safe."""
+    events = [
+        event
+        async for event in AgentRunner(dependencies(PartialPagesMonday())).stream_agent(
+            "How healthy is the pipeline?", sid(33)
         )
     ]
 
     sources = next(event for event in events if event.event == "sources")
     caveats = next(event for event in events if event.event == "caveats")
-    assert [source.board_name for source in sources.sources] == ["Deals", "Work Orders"]
-    assert sources.sources[1].item_count == 0
-    assert sources.sources[1].partial is True
-    assert any("authentication failed" in caveat for caveat in caveats.caveats)
-    assert "bearer-secret-value" not in " ".join(caveats.caveats)
+    assert sources.sources[0].partial is True
+    assert sources.sources[0].error == "monday.com returned partial board results."
+    assert "super-secret-token" not in " ".join(caveats.caveats)
+    assert caveats.quality.total_rows == 2
     assert events[-1].event == "done"
 
 
@@ -395,11 +592,11 @@ async def test_total_rate_limit_failure_is_one_clean_error_event() -> None:
     events = [
         event
         async for event in AgentRunner(dependencies(RateLimitedMonday())).stream_agent(
-            "Which won deals have no work orders?", "rate-1", []
+            "Which won deals have no work orders?", sid(34)
         )
     ]
 
     assert events[-1].event == "error"
-    assert events[-1].code == "data_source_unavailable"
+    assert events[-1].code == "required_source_unavailable"
     assert "rate-limited" in events[-1].message
     assert "HTTP 429" not in events[-1].message

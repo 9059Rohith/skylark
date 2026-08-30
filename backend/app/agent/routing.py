@@ -34,6 +34,7 @@ class IntentDecision(BaseModel):
     sector: str | None = None
     breakdown_by_sector: bool = False
     clarification_question: str | None = None
+    pending_clarification: dict[str, object] | None = None
 
 
 def resolve_quarter(
@@ -57,7 +58,25 @@ def resolve_quarter(
     return Period(
         start=date(start_year, start_month, 1),
         end=date(end_year, end_month, monthrange(end_year, end_month)[1]),
-        label=f"FY{fiscal_year} Q{quarter}" if fiscal_year_start_month != 1 else f"{now.year} Q{quarter}",
+        label=f"FY{fiscal_year} Q{quarter}"
+        if fiscal_year_start_month != 1
+        else f"{now.year} Q{quarter}",
+    )
+
+
+def resolve_period(
+    message: str, *, now: datetime, fiscal_year_start_month: int = 1
+) -> Period | None:
+    """Resolve the supported relative calendar/fiscal periods deterministically."""
+    lowered = message.casefold()
+    if "this month" in lowered or "current month" in lowered:
+        return Period(
+            start=date(now.year, now.month, 1),
+            end=date(now.year, now.month, monthrange(now.year, now.month)[1]),
+            label=now.strftime("%B %Y"),
+        )
+    return resolve_quarter(
+        message, now=now, fiscal_year_start_month=fiscal_year_start_month
     )
 
 
@@ -75,6 +94,7 @@ def parse_intent(
     *,
     prior_intent: Intent | str | None = None,
     prior_period: Period | dict[str, object] | None = None,
+    pending_clarification: dict[str, object] | None = None,
     now: datetime | None = None,
     fiscal_year_start_month: int = 1,
 ) -> IntentDecision:
@@ -83,8 +103,25 @@ def parse_intent(
     follow_up = "sector" in lowered and any(
         phrase in lowered for phrase in ("break", "by sector", "sector split")
     )
+    mentioned_sectors = _mentioned_sectors(message)
+    pending_kind = (
+        str(pending_clarification.get("kind")) if pending_clarification else None
+    )
+    pending_options = (
+        [str(option) for option in pending_clarification.get("options", [])]
+        if pending_clarification
+        else []
+    )
+    sector_resolution = (
+        pending_kind == "sector"
+        and len(mentioned_sectors) == 1
+        and mentioned_sectors[0] in pending_options
+    )
     recognized = False
-    if follow_up and prior_intent is not None:
+    if sector_resolution and prior_intent is not None:
+        intent = Intent(prior_intent)
+        recognized = True
+    elif follow_up and prior_intent is not None:
         intent = Intent(prior_intent)
         recognized = True
     elif "leadership" in lowered or "weekly update" in lowered:
@@ -107,25 +144,51 @@ def parse_intent(
         intent = Intent.PIPELINE_HEALTH
         recognized = any(word in lowered for word in ("pipeline", "deal", "revenue"))
 
-    sectors = _mentioned_sectors(message)
+    sectors = mentioned_sectors
+    period = (
+        Period.model_validate(prior_period)
+        if (follow_up or sector_resolution) and prior_period
+        else None
+    )
+    if period is None and now is not None:
+        period = resolve_period(
+            message, now=now, fiscal_year_start_month=fiscal_year_start_month
+        )
     clarification = None
+    pending: dict[str, object] | None = None
     if len(sectors) > 1:
         clarification = f"Which sector should I use: {' or '.join(sectors)}?"
+        pending = {
+            "kind": "sector",
+            "options": sectors,
+            "intent": intent.value,
+            "period": period.model_dump(mode="json") if period else None,
+        }
+    elif pending_kind == "sector" and not sector_resolution:
+        clarification = f"Which sector should I use: {' or '.join(pending_options)}?"
+        pending = pending_clarification
+    elif intent == Intent.DATA_QUALITY and period is not None:
+        clarification = (
+            "Which date field should define the requested period for this data-quality check?"
+        )
+        pending = {
+            "kind": "data_quality_period_field",
+            "options": [],
+            "intent": intent.value,
+            "period": period.model_dump(mode="json"),
+        }
     elif not recognized:
         clarification = (
             "Which view do you need: pipeline health, won deals without work orders, "
             "work-order completion, data quality, or a leadership update?"
         )
+        pending = {"kind": "intent", "options": [intent.value]}
 
-    period = Period.model_validate(prior_period) if follow_up and prior_period else None
-    if period is None and now is not None:
-        period = resolve_quarter(
-            message, now=now, fiscal_year_start_month=fiscal_year_start_month
-        )
     return IntentDecision(
         intent=intent,
         period=period,
         sector=sectors[0] if len(sectors) == 1 else None,
         breakdown_by_sector=follow_up,
         clarification_question=clarification,
+        pending_clarification=pending,
     )

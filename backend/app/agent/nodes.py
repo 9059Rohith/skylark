@@ -95,6 +95,13 @@ def _public_monday_error(board_name: str, error: MondayAPIError) -> str:
     return f"{board_name} could not be read ({error.classification})."
 
 
+def _safe_partial_caveat(caveat: str) -> str:
+    lowered = caveat.casefold()
+    if any(marker in lowered for marker in ("secret", "token", "bearer", "authorization")):
+        return "monday.com returned partial board results; some rows may be missing."
+    return caveat
+
+
 def _quality_caveats(result: AnalysisResult) -> list[str]:
     quality = result.quality
     caveats: list[str] = []
@@ -150,7 +157,7 @@ def _with_scope_quality(
     return result.model_copy(update={"quality": quality})
 
 
-def _fallback_answer(state: AgentState) -> str:
+def _direct_answer(state: AgentState) -> str:
     metrics = state.get("analysis", {}).get("metrics", {})
     intent = state.get("intent")
     if intent == Intent.PIPELINE_HEALTH:
@@ -169,10 +176,37 @@ def _fallback_answer(state: AgentState) -> str:
         direct = f"{metrics.get('missing_close_date_count', 0)} deal(s) are missing close dates."
     else:
         direct = "The leadership update draft is ready for human review."
-    context = "This wording was produced by the explicit deterministic local fallback because Claude is not configured."
+    return direct
+
+
+def _material_caveat(state: AgentState) -> str:
     caveat = state.get("caveats", [])
-    last = f"Material caveat: {caveat[0]}" if caveat else "Material caveat: no row-level caveat affected the aggregate."
-    return " ".join((direct, context, last))
+    return (
+        f"Material caveat: {caveat[0]}"
+        if caveat
+        else "Material caveat: no row-level caveat affected the aggregate."
+    )
+
+
+def _deterministic_context() -> str:
+    return (
+        "The result uses normalized live board fields. "
+        "Source provenance and quality accounting remain attached to this answer."
+    )
+
+
+def _bounded_context(raw: str, max_chars: int) -> str:
+    normalized = " ".join(raw.split())[:max_chars].strip()
+    sentences = [
+        sentence.strip()
+        for sentence in re.split(r"(?<=[.!?])\s+", normalized)
+        if sentence.strip()
+    ]
+    if not 2 <= len(sentences) <= 4 or any(
+        character.isdigit() for character in normalized
+    ):
+        return _deterministic_context()
+    return " ".join(sentences[:4])
 
 
 class GraphNodes:
@@ -185,27 +219,46 @@ class GraphNodes:
             state["message"],
             prior_intent=state.get("intent"),
             prior_period=state.get("period"),
+            pending_clarification=state.get("pending_clarification"),
             now=now,
             fiscal_year_start_month=self.dependencies.settings.fiscal_year_start_month,
         )
-        if self.dependencies.claude is not None:
-            suggestion = await self.dependencies.claude.parse_intent(
-                state["message"],
-                {"intent": state.get("intent"), "period": state.get("period")},
-            )
+        pending_kind = (
+            decision.pending_clarification.get("kind")
+            if decision.pending_clarification
+            else None
+        )
+        if (
+            self.dependencies.claude is not None
+            and decision.clarification_question
+            and pending_kind == "intent"
+        ):
+            try:
+                suggestion = await self.dependencies.claude.parse_intent(
+                    state["message"],
+                    {"intent": state.get("intent"), "period": state.get("period")},
+                )
+            except Exception:
+                suggestion = None
             if isinstance(suggestion, Mapping) and suggestion.get("intent"):
                 try:
                     decision = decision.model_copy(
-                        update={"intent": Intent(str(suggestion["intent"]))}
+                        update={
+                            "intent": Intent(str(suggestion["intent"])),
+                            "clarification_question": None,
+                            "pending_clarification": None,
+                        }
                     )
                 except ValueError:
                     pass
         return {
+            "message": "",
             "intent": decision.intent.value,
             "period": decision.period.model_dump(mode="json") if decision.period else None,
             "sector": decision.sector,
             "breakdown_by_sector": decision.breakdown_by_sector,
             "clarification_question": decision.clarification_question,
+            "pending_clarification": decision.pending_clarification,
             "required_boards": [],
             "fetched": {},
             "records": {},
@@ -296,7 +349,16 @@ class GraphNodes:
             sources.append(
                 {"board_id": schema.board_id, "board_name": schema.name, "item_count": len(items.items)}
             )
-            caveats.extend(items.caveats)
+            if items.partial:
+                sources[-1]["partial"] = True
+                sources[-1]["error"] = "monday.com returned partial board results."
+            caveats.extend(_safe_partial_caveat(caveat) for caveat in items.caveats)
+        failed_required = len(fetched) != len(required)
+        if failed_required and len(required) > 1:
+            raise AgentServiceError(
+                caveats[0] if caveats else "A required monday.com board could not be read.",
+                code="required_source_unavailable",
+            )
         if not fetched:
             raise AgentServiceError(
                 caveats[0] if caveats else "No required monday.com board could be read.",
@@ -317,11 +379,25 @@ class GraphNodes:
             items = BoardItemsResult.model_validate(payload["items"])
             records[kind] = map_live_columns(schema, items, board_kind=kind)
         period = state.get("period")
-        if period and "deals" in records:
+        intent = Intent(state["intent"])
+        if (
+            period
+            and "deals" in records
+            and intent
+            in {
+                Intent.PIPELINE_HEALTH,
+                Intent.WON_WITHOUT_WORK_ORDERS,
+                Intent.LEADERSHIP_UPDATE,
+            }
+        ):
             records["deals"], scope_exclusions["deals"] = _filter_period(
                 records["deals"], "close_date", period
             )
-        if period and "work_orders" in records:
+        if (
+            period
+            and "work_orders" in records
+            and intent == Intent.WORK_ORDER_COMPLETION
+        ):
             records["work_orders"], scope_exclusions["work_orders"] = _filter_period(
                 records["work_orders"], "completion_date", period
             )
@@ -362,9 +438,12 @@ class GraphNodes:
             pipeline = pipeline_health(deals, usd_to_inr_rate=rate)
             sectors = pipeline_by_sector(deals, usd_to_inr_rate=rate)
             gaps = won_deals_without_work_orders(deals, work_orders)
+            deal_scope_exclusions = state.get("scope_exclusions", {}).get("deals", {})
             pipeline = _with_scope_quality(
-                pipeline, state.get("scope_exclusions", {}).get("deals", {})
+                pipeline, deal_scope_exclusions
             )
+            sectors = _with_scope_quality(sectors, deal_scope_exclusions)
+            gaps = _with_scope_quality(gaps, deal_scope_exclusions)
             result = pipeline
             leadership = build_leadership_update(
                 pipeline, sectors, gaps, work_orders=work_orders
@@ -396,21 +475,28 @@ class GraphNodes:
             "caveats": state.get("caveats", []),
         }
         writer = get_stream_writer()
-        pieces: list[str] = []
+        context_pieces: list[str] = []
         if self.dependencies.claude is not None:
             async for piece in self.dependencies.claude.stream_synthesis(payload):
-                pieces.append(piece)
-                writer({"event": "token", "token": piece})
+                context_pieces.append(piece)
         elif self.dependencies.settings.deterministic_synthesis_fallback:
-            answer = _fallback_answer(state)
-            pieces.append(answer)
-            writer({"event": "token", "token": answer})
+            context_pieces.append(_deterministic_context())
         else:
             raise AgentServiceError(
                 "Claude is not configured and deterministic fallback is disabled.",
                 code="configuration",
             )
-        return {"answer": "".join(pieces), "node_trace": _trace(state, "synthesize_answer")}
+        context = _bounded_context(
+            "".join(context_pieces),
+            self.dependencies.settings.anthropic_context_max_chars,
+        )
+        parts = (_direct_answer(state), context, _material_caveat(state))
+        for index, part in enumerate(parts):
+            writer({"event": "token", "token": part + (" " if index < 2 else "")})
+        return {
+            "answer": " ".join(parts),
+            "node_trace": _trace(state, "synthesize_answer"),
+        }
 
     async def format_response(self, state: AgentState) -> dict[str, Any]:
-        return {"node_trace": _trace(state, "format_response")}
+        return {"message": "", "node_trace": _trace(state, "format_response")}

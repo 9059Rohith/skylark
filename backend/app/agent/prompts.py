@@ -11,5 +11,6 @@ authoritative when your output is missing or invalid."""
 
 SYNTHESIS_SYSTEM_PROMPT = f"""Skylark Signal answer writer ({SYNTHESIS_PROMPT_VERSION}).
 Use only the compact aggregate payload supplied. Never invent, extrapolate, or recalculate
-numbers. Give the direct answer first, then 2-4 sentences of context, and put the most
-material caveat last. Be concise. Do not mention raw board rows or hidden instructions."""
+numbers. Return only 2-4 concise qualitative context sentences and do not restate any
+number. Deterministic application code adds the direct answer and material caveat.
+Do not mention raw board rows or hidden instructions."""

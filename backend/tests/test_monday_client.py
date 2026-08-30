@@ -3,6 +3,7 @@ from collections.abc import Mapping
 from typing import Any
 
 import pytest
+import httpx
 
 from app.monday.client import GraphQLMondayClient, MondayAPIError
 from app.monday.schemas import ColumnSchema, SearchFilters
@@ -298,6 +299,80 @@ def test_get_board_items_returns_accumulated_items_when_later_page_retries_fail(
     assert result.partial is True
     assert "later page" in result.caveats[-1].casefold()
     assert "server" in result.caveats[-1].casefold()
+
+
+def test_later_page_transport_caveat_never_contains_raw_exception_text() -> None:
+    """A secret-bearing transport exception must be sanitized at the monday boundary."""
+    first_page = FakeResponse(
+        {
+            "data": {
+                "boards": [
+                    {
+                        "id": "42",
+                        "name": "Deals",
+                        "items_page": {
+                            "cursor": "next",
+                            "items": [{"id": "d-1", "name": "Acme", "column_values": []}],
+                        },
+                    }
+                ]
+            }
+        }
+    )
+    request = httpx.Request("POST", "https://api.monday.com/v2")
+    fake = FakeHTTPClient(
+        [
+            schema_response(),
+            first_page,
+            httpx.ConnectError("bearer super-secret-token", request=request),
+        ]
+    )
+    client = GraphQLMondayClient(token="secret", http_client=fake, max_attempts=1)
+
+    result = asyncio.run(client.get_board_items("42"))
+
+    assert result.partial is True
+    assert "transport" in result.caveats[-1]
+    assert "super-secret-token" not in result.caveats[-1]
+
+
+def test_later_page_graphql_partial_caveat_redacts_secret_bearing_message() -> None:
+    """Partial GraphQL error text is untrusted and must be sanitized before storage."""
+    fake = FakeHTTPClient(
+        [
+            schema_response(),
+            FakeResponse(
+                {
+                    "data": {
+                        "boards": [
+                            {
+                                "id": "42",
+                                "name": "Deals",
+                                "items_page": {
+                                    "cursor": "next",
+                                    "items": [
+                                        {"id": "d-1", "name": "Acme", "column_values": []}
+                                    ],
+                                },
+                            }
+                        ]
+                    }
+                }
+            ),
+            FakeResponse(
+                {
+                    "data": {"next_items_page": {"cursor": None, "items": []}},
+                    "errors": [{"message": "Authorization bearer super-secret-token"}],
+                }
+            ),
+        ]
+    )
+    client = GraphQLMondayClient(token="secret", http_client=fake)
+
+    result = asyncio.run(client.get_board_items("42"))
+
+    assert result.partial is True
+    assert "super-secret-token" not in " ".join(result.caveats)
 
 
 def test_get_board_items_returns_accumulated_items_for_malformed_later_page() -> None:

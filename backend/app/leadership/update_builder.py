@@ -7,6 +7,8 @@ from typing import Any
 from pydantic import BaseModel, ConfigDict, Field
 
 from app.cleaning import normalize_date
+from app.cleaning.quality_report import DataQualityReport
+from app.intelligence.operations_metrics import average_work_order_completion_time
 from app.intelligence.schemas import AnalysisResult
 
 
@@ -35,8 +37,20 @@ class LeadershipUpdate(BaseModel):
     headline_pipeline_value_inr: Decimal
     sector_breakdown: list[SectorSummary] = Field(default_factory=list)
     notable_at_risk: list[AtRiskItem] = Field(default_factory=list)
+    quality: "LeadershipQuality"
     quality_footnote: str
     markdown: str
+
+
+class LeadershipQuality(BaseModel):
+    """Per-section reports; deliberately not merged across repeated source rows."""
+
+    model_config = ConfigDict(frozen=True)
+
+    pipeline: DataQualityReport
+    sector: DataQualityReport
+    gaps: DataQualityReport
+    operational_risks: DataQualityReport
 
 
 def _decimal(value: Any) -> Decimal:
@@ -102,9 +116,20 @@ def build_leadership_update(
         if len(at_risk) >= 5:
             break
     excluded = pipeline.quality.total_rows - pipeline.quality.included_rows
-    quality_footnote = (
-        f"{excluded} of {pipeline.quality.total_rows} pipeline rows were excluded "
-        "from the headline metric based on normalization validity."
+    operational_quality = average_work_order_completion_time(work_orders).quality
+    quality = LeadershipQuality(
+        pipeline=pipeline.quality,
+        sector=sectors.quality,
+        gaps=gaps.quality,
+        operational_risks=operational_quality,
+    )
+    quality_footnote = " ".join(
+        (
+            f"Pipeline quality: {excluded} of {pipeline.quality.total_rows} pipeline rows were excluded.",
+            f"Sector quality: {sectors.quality.included_rows} of {sectors.quality.total_rows} rows had valid amounts.",
+            f"Gap-analysis quality: {gaps.quality.included_rows} of {gaps.quality.total_rows} deal/work-order evidence rows were usable.",
+            f"Operational-risk quality: {operational_quality.included_rows} of {operational_quality.total_rows} work orders had valid completion chronology.",
+        )
     )
     sector_lines = [
         f"- {row.sector}: INR {row.pipeline_value_inr:,} across {row.deal_count} deal(s)"
@@ -133,6 +158,7 @@ def build_leadership_update(
         headline_pipeline_value_inr=headline,
         sector_breakdown=sector_rows,
         notable_at_risk=at_risk,
+        quality=quality,
         quality_footnote=quality_footnote,
         markdown=markdown,
     )

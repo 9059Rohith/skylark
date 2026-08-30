@@ -1,23 +1,26 @@
 """Typed request and server-sent event contracts shared with the frontend."""
 
 from typing import Annotated, Literal
+from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, Field, StringConstraints, field_validator
+from pydantic import AfterValidator, BaseModel, ConfigDict, Field, field_validator
 
+from app.cleaning import DataQualityReport
 from app.leadership.update_builder import LeadershipUpdate
 
 
-SessionId = Annotated[
-    str,
-    StringConstraints(min_length=1, max_length=128, pattern=r"^[A-Za-z0-9][A-Za-z0-9._:-]*$"),
-]
+def validate_session_id(value: str) -> str:
+    """Require canonical, high-entropy UUIDv4 identifiers."""
+    try:
+        parsed = UUID(value)
+    except (ValueError, AttributeError) as error:
+        raise ValueError("session_id must be a UUIDv4") from error
+    if parsed.version != 4 or str(parsed) != value.casefold():
+        raise ValueError("session_id must be a canonical UUIDv4")
+    return value.casefold()
 
 
-class HistoryMessage(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
-    role: Literal["user", "assistant"]
-    content: str = Field(min_length=1)
+SessionId = Annotated[str, AfterValidator(validate_session_id)]
 
 
 class ChatRequest(BaseModel):
@@ -25,7 +28,6 @@ class ChatRequest(BaseModel):
 
     message: str = Field(min_length=1)
     session_id: SessionId
-    history: list[HistoryMessage] = Field(default_factory=list)
 
     @field_validator("message")
     @classmethod
@@ -58,6 +60,7 @@ class SourcesEvent(BaseModel):
 class CaveatsEvent(BaseModel):
     event: Literal["caveats"] = "caveats"
     caveats: list[str]
+    quality: DataQualityReport | None = None
 
 
 class LeadershipUpdateEvent(BaseModel):

@@ -53,6 +53,13 @@ def test_leadership_update_is_a_typed_reviewable_draft_with_no_send_action() -> 
     assert draft.notable_at_risk[0].record_id == "d-2"
     assert draft.notable_at_risk[1].record_id == "wo-9"
     assert draft.notable_at_risk[1].record_type == "work_order"
+    assert draft.quality.pipeline == pipeline.quality
+    assert draft.quality.sector == sectors.quality
+    assert draft.quality.gaps == gaps.quality
+    assert draft.quality.operational_risks.total_rows == 1
+    assert draft.quality.operational_risks.exclusions == {"missing_value": 1}
     assert "1 of 3 pipeline rows were excluded" in draft.quality_footnote
     assert draft.markdown.startswith("# Leadership update (draft)")
+    assert "Pipeline quality:" in draft.markdown
+    assert "Gap-analysis quality:" in draft.markdown
     assert not hasattr(draft, "send")

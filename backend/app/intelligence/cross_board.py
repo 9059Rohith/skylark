@@ -72,11 +72,12 @@ def won_deals_without_work_orders(
             "missing_work_orders": missing,
         },
         quality=DataQualityReport(
-            total_rows=len(deals),
-            included_rows=matchable_count,
+            total_rows=len(deals) + len(work_orders),
+            included_rows=matchable_count + len(work_orders),
             exclusions=dict(exclusions),
             normalization_notes=[
-                "Work orders match won deals by exact relation ID, then normalized client name."
+                "Work orders match won deals by exact relation ID, then normalized client name.",
+                "Quality accounting includes both target deal rows and all work-order evidence rows.",
             ],
         ),
     )

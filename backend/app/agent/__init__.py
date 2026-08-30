@@ -1,6 +1,13 @@
 """LangGraph orchestration package."""
 from app.agent.graph import AgentDependencies, AgentRunner, build_graph, run_agent
-from app.agent.routing import Intent, IntentDecision, Period, parse_intent, resolve_quarter
+from app.agent.routing import (
+    Intent,
+    IntentDecision,
+    Period,
+    parse_intent,
+    resolve_period,
+    resolve_quarter,
+)
 
 __all__ = [
     "AgentDependencies",
@@ -10,6 +17,7 @@ __all__ = [
     "Period",
     "build_graph",
     "parse_intent",
+    "resolve_period",
     "resolve_quarter",
     "run_agent",
 ]

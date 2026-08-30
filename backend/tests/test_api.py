@@ -2,6 +2,7 @@ from collections.abc import AsyncIterator
 
 from fastapi.testclient import TestClient
 
+from app.cleaning import DataQualityReport
 from app.api_models import (
     CaveatsEvent,
     DoneEvent,
@@ -14,21 +15,34 @@ from app.config import Settings
 from app.leadership.update_builder import LeadershipUpdate
 from app.main import create_app
 
+SESSION_ID = "00000000-0000-4000-8000-000000000001"
+
 
 class FakeStreamingAgent:
-    async def stream_agent(
-        self, message: str, session_id: str, history: list[dict[str, str]]
-    ) -> AsyncIterator[object]:
+    async def stream_agent(self, message: str, session_id: str) -> AsyncIterator[object]:
         yield StatusEvent(stage="fetch_from_monday", message="Reading boards")
         yield SourcesEvent(
             sources=[{"board_id": "101", "board_name": "Deals", "item_count": 2}]
         )
-        yield CaveatsEvent(caveats=["1 row excluded from the headline metric."])
+        yield CaveatsEvent(
+            caveats=["1 row excluded from the headline metric."],
+            quality=DataQualityReport(
+                total_rows=3,
+                included_rows=2,
+                exclusions={"invalid_currency": 1},
+            ),
+        )
         yield LeadershipUpdateEvent(
             leadership_update=LeadershipUpdate(
                 headline_pipeline_value_inr="21000000",
                 sector_breakdown=[],
                 notable_at_risk=[],
+                quality={
+                    "pipeline": {"total_rows": 3, "included_rows": 2},
+                    "sector": {"total_rows": 3, "included_rows": 2},
+                    "gaps": {"total_rows": 4, "included_rows": 4},
+                    "operational_risks": {"total_rows": 1, "included_rows": 1},
+                },
                 quality_footnote="1 row excluded.",
                 markdown="# Leadership update (draft)",
             )
@@ -39,12 +53,11 @@ class FakeStreamingAgent:
 
 def api_settings() -> Settings:
     return Settings(
-        deals_board_id="101",
-        work_orders_board_id="202",
+        MONDAY_DEALS_BOARD_ID="101",
+        MONDAY_WORK_ORDERS_BOARD_ID="202",
         deterministic_synthesis_fallback=True,
         cors_allow_origins=("https://signal.example",),
         max_message_length=40,
-        max_history_messages=2,
     )
 
 
@@ -55,7 +68,47 @@ def test_health_is_ready_without_exposing_configuration_or_secrets() -> None:
     response = client.get("/health")
 
     assert response.status_code == 200
-    assert response.json() == {"status": "ok"}
+    assert response.json() == {
+        "status": "degraded",
+        "missing": ["MONDAY_API_TOKEN", "ANTHROPIC_API_KEY"],
+    }
+
+
+def test_health_reports_ready_only_when_all_required_configuration_exists() -> None:
+    """Configured readiness must be explicit and contain no secret values."""
+    settings = api_settings().model_copy(
+        update={
+            "monday_api_token": "monday-secret",
+            "anthropic_api_key": "anthropic-secret",
+        }
+    )
+    client = TestClient(create_app(agent=FakeStreamingAgent(), settings=settings))
+
+    response = client.get("/health")
+
+    assert response.json() == {"status": "ready", "missing": []}
+    assert "secret" not in response.text
+
+
+def test_health_lists_every_missing_required_integration_setting() -> None:
+    """Missing board IDs must degrade readiness just like absent API credentials."""
+    settings = Settings(
+        MONDAY_DEALS_BOARD_ID="",
+        MONDAY_WORK_ORDERS_BOARD_ID="",
+        monday_api_token=None,
+        anthropic_api_key=None,
+    )
+    client = TestClient(create_app(agent=FakeStreamingAgent(), settings=settings))
+
+    assert client.get("/health").json() == {
+        "status": "degraded",
+        "missing": [
+            "MONDAY_API_TOKEN",
+            "MONDAY_DEALS_BOARD_ID",
+            "MONDAY_WORK_ORDERS_BOARD_ID",
+            "ANTHROPIC_API_KEY",
+        ],
+    }
 
 
 def test_chat_streams_every_typed_sse_event_with_board_counts() -> None:
@@ -63,7 +116,7 @@ def test_chat_streams_every_typed_sse_event_with_board_counts() -> None:
     client = TestClient(create_app(agent=FakeStreamingAgent(), settings=api_settings()))
 
     response = client.post(
-        "/chat", json={"message": "Draft leadership update", "session_id": "session-7"}
+        "/chat", json={"message": "Draft leadership update", "session_id": SESSION_ID}
     )
 
     assert response.status_code == 200
@@ -77,21 +130,29 @@ def test_chat_streams_every_typed_sse_event_with_board_counts() -> None:
         "event: done",
     ]
     assert '"board_name":"Deals","item_count":2' in response.text
+    assert '"quality":{"total_rows":3,"included_rows":2' in response.text
 
 
-def test_chat_rejects_invalid_session_message_and_history_bounds() -> None:
+def test_chat_requires_uuid4_and_rejects_message_or_history_input() -> None:
     """Unbounded or malformed caller input must never enter the agent graph."""
     client = TestClient(create_app(agent=FakeStreamingAgent(), settings=api_settings()))
 
     bad_session = client.post("/chat", json={"message": "hello", "session_id": "bad id!"})
-    long_message = client.post(
-        "/chat", json={"message": "x" * 41, "session_id": "valid-session"}
-    )
-    long_history = client.post(
+    wrong_uuid_version = client.post(
         "/chat",
         json={
             "message": "hello",
-            "session_id": "valid-session",
+            "session_id": "6ba7b810-9dad-11d1-80b4-00c04fd430c8",
+        },
+    )
+    long_message = client.post(
+        "/chat", json={"message": "x" * 41, "session_id": SESSION_ID}
+    )
+    supplied_history = client.post(
+        "/chat",
+        json={
+            "message": "hello",
+            "session_id": SESSION_ID,
             "history": [
                 {"role": "user", "content": "one"},
                 {"role": "assistant", "content": "two"},
@@ -101,8 +162,9 @@ def test_chat_rejects_invalid_session_message_and_history_bounds() -> None:
     )
 
     assert bad_session.status_code == 422
+    assert wrong_uuid_version.status_code == 422
     assert long_message.status_code == 422
-    assert long_history.status_code == 422
+    assert supplied_history.status_code == 422
 
 
 def test_chat_rejects_whitespace_only_message() -> None:
@@ -110,7 +172,7 @@ def test_chat_rejects_whitespace_only_message() -> None:
     client = TestClient(create_app(agent=FakeStreamingAgent(), settings=api_settings()))
 
     response = client.post(
-        "/chat", json={"message": "   ", "session_id": "valid-session"}
+        "/chat", json={"message": "   ", "session_id": SESSION_ID}
     )
 
     assert response.status_code == 422

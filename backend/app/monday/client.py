@@ -106,6 +106,7 @@ class GraphQLMondayClient:
             "Content-Type": "application/json",
             "API-Version": MONDAY_API_VERSION,
         }
+        self._owns_http = http_client is None
         self._http = http_client or httpx.AsyncClient(timeout=httpx.Timeout(20.0))
         self._max_attempts = max_attempts
         self._max_retry_delay = max(0.0, max_retry_delay)
@@ -114,6 +115,11 @@ class GraphQLMondayClient:
         self._monotonic = monotonic
         self._schema_cache: dict[str, tuple[float, BoardSchema]] = {}
         self._schema_locks: dict[str, asyncio.Lock] = {}
+
+    async def aclose(self) -> None:
+        """Close only the HTTP client constructed by this transport."""
+        if self._owns_http:
+            await self._http.aclose()
 
     @staticmethod
     def _validate_board_id(board_id: str) -> str:
@@ -131,6 +137,16 @@ class GraphQLMondayClient:
             str(error.get("message", "Unknown monday GraphQL error"))
             for error in errors
             if isinstance(error, Mapping)
+        )
+
+    @staticmethod
+    def _safe_caveats(messages: tuple[str, ...]) -> tuple[str, ...]:
+        sensitive = ("secret", "token", "bearer", "authorization")
+        return tuple(
+            "monday.com returned a partial GraphQL response."
+            if any(marker in message.casefold() for marker in sensitive)
+            else message
+            for message in messages
         )
 
     @staticmethod
@@ -311,7 +327,7 @@ class GraphQLMondayClient:
                 board_id=str(raw_board.get("id", board_id)),
                 name=str(raw_board.get("name", "")),
                 columns=tuple(columns),
-                caveats=self._messages(payload),
+                caveats=self._safe_caveats(self._messages(payload)),
             )
             self._schema_cache[board_id] = (now + self._schema_ttl, schema)
             return schema
@@ -360,7 +376,7 @@ class GraphQLMondayClient:
                 retryable=False,
             )
 
-        caveats = [*schema.caveats, *self._messages(payload)]
+        caveats = [*schema.caveats, *self._safe_caveats(self._messages(payload))]
         raw_items = list(page.get("items") or [])
         cursor = page.get("cursor")
         while cursor:
@@ -371,10 +387,10 @@ class GraphQLMondayClient:
                 )
             except MondayAPIError as error:
                 caveats.append(
-                    f"Later page fetch failed ({error.classification}): {error}"
+                    f"Later page fetch failed ({error.classification}); remaining items were not fetched."
                 )
                 break
-            caveats.extend(self._messages(next_payload))
+            caveats.extend(self._safe_caveats(self._messages(next_payload)))
             next_data = next_payload.get("data")
             next_page = (
                 next_data.get("next_items_page") if isinstance(next_data, Mapping) else None

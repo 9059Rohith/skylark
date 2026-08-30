@@ -196,8 +196,8 @@ def test_won_deals_without_work_orders_matches_relation_then_normalized_client()
         "missing_work_order_count": 1,
         "missing_work_orders": [{"deal_id": "d-3", "deal_name": "Third", "client": "Gamma"}],
     }
-    assert result.quality.total_rows == 4
-    assert result.quality.included_rows == 3
+    assert result.quality.total_rows == 6
+    assert result.quality.included_rows == 5
     assert result.quality.exclusions == {"not_won": 1}
 
 

@@ -64,8 +64,10 @@ async def test_claude_service_uses_versioned_bounded_structured_calls_and_deltas
     assert decision == {"intent": "data_quality"}
     assert messages.create_kwargs["model"] == "claude-sonnet-5"
     assert messages.create_kwargs["max_tokens"] == 256
+    assert not {"temperature", "top_p", "top_k"} & messages.create_kwargs.keys()
     assert "intent-v1" in messages.create_kwargs["system"]
     assert messages.stream_kwargs["max_tokens"] == 321
+    assert not {"temperature", "top_p", "top_k"} & messages.stream_kwargs.keys()
     assert "synthesis-v1" in messages.stream_kwargs["system"]
     assert deltas == ["Direct answer. ", "Caveat last."]
 

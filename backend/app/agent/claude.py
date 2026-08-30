@@ -20,6 +20,7 @@ class ClaudeService:
             raise ValueError("ANTHROPIC_API_KEY is required for ClaudeService")
         self._model = settings.anthropic_model
         self._max_tokens = settings.anthropic_max_tokens
+        self._owns_client = client is None
         self._client = client or AsyncAnthropic(
             api_key=settings.anthropic_api_key,
             timeout=settings.anthropic_timeout_seconds,
@@ -33,7 +34,6 @@ class ClaudeService:
         response = await self._client.messages.create(
             model=self._model,
             max_tokens=min(self._max_tokens, 256),
-            temperature=0,
             system=INTENT_SYSTEM_PROMPT,
             messages=[
                 {
@@ -60,7 +60,6 @@ class ClaudeService:
         async with self._client.messages.stream(
             model=self._model,
             max_tokens=self._max_tokens,
-            temperature=0,
             system=SYNTHESIS_SYSTEM_PROMPT,
             messages=[
                 {
@@ -71,3 +70,8 @@ class ClaudeService:
         ) as stream:
             async for text in stream.text_stream:
                 yield text
+
+    async def aclose(self) -> None:
+        """Close only the SDK client constructed by this service."""
+        if self._owns_client:
+            await self._client.close()
