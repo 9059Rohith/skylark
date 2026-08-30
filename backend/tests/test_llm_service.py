@@ -180,3 +180,51 @@ async def test_openai_failure_terminals_raise_one_sanitized_provider_error(
         ]
 
     assert "upstream-secret" not in str(captured.value)
+
+
+@pytest.mark.asyncio
+async def test_openai_whitespace_only_output_is_a_sanitized_provider_failure() -> None:
+    """Formatting-only deltas cannot satisfy the meaningful synthesis contract."""
+    events = (
+        SimpleNamespace(type="response.output_text.delta", delta=" \n\t "),
+        SimpleNamespace(type="response.completed"),
+    )
+    service = OpenAIService(
+        Settings(openai_api_key="test-key"),
+        client=FakeOpenAIClient(events),
+    )
+
+    with pytest.raises(
+        RuntimeError,
+        match="The language model could not complete the response",
+    ):
+        _ = [
+            delta
+            async for delta in service.stream_synthesis(
+                {"intent": "pipeline_health", "metrics": {}}
+            )
+        ]
+
+
+@pytest.mark.asyncio
+async def test_openai_preserves_whitespace_around_meaningful_text() -> None:
+    """Whitespace that separates real streamed words remains harmless and intact."""
+    events = (
+        SimpleNamespace(type="response.output_text.delta", delta=" First"),
+        SimpleNamespace(type="response.output_text.delta", delta=" \n "),
+        SimpleNamespace(type="response.output_text.delta", delta="context."),
+        SimpleNamespace(type="response.completed"),
+    )
+    service = OpenAIService(
+        Settings(openai_api_key="test-key"),
+        client=FakeOpenAIClient(events),
+    )
+
+    deltas = [
+        delta
+        async for delta in service.stream_synthesis(
+            {"intent": "pipeline_health", "metrics": {}}
+        )
+    ]
+
+    assert "".join(deltas) == " First \n context."

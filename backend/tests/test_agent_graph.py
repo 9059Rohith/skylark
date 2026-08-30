@@ -1,6 +1,7 @@
 import asyncio
 from collections.abc import AsyncIterator
 from datetime import datetime
+from types import SimpleNamespace
 from typing import Any
 from zoneinfo import ZoneInfo
 
@@ -750,10 +751,33 @@ async def test_total_rate_limit_failure_is_one_clean_error_event() -> None:
 
 
 @pytest.mark.asyncio
-async def test_openai_failed_terminal_emits_sanitized_error_without_filler_or_done() -> None:
-    """A provider failure terminal is not a successful empty qualitative context."""
+@pytest.mark.parametrize(
+    "provider_events",
+    [
+        (
+            SimpleNamespace(
+                type="response.failed",
+                response=SimpleNamespace(
+                    error=SimpleNamespace(message="Bearer provider-secret")
+                ),
+            ),
+        ),
+        (
+            SimpleNamespace(type="response.output_text.delta", delta=" \n\t "),
+            SimpleNamespace(type="response.completed"),
+        ),
+    ],
+    ids=["failed-terminal", "whitespace-only"],
+)
+async def test_openai_unsuccessful_output_emits_error_without_filler_or_done(
+    provider_events: tuple[Any, ...],
+) -> None:
+    """Provider failure or formatting-only output is not successful context."""
 
     class FailedStream:
+        def __init__(self, events: tuple[Any, ...]) -> None:
+            self.events = events
+
         async def __aenter__(self):
             return self
 
@@ -762,31 +786,15 @@ async def test_openai_failed_terminal_emits_sanitized_error_without_filler_or_do
 
         def __aiter__(self):
             async def events():
-                yield type(
-                    "FailedEvent",
-                    (),
-                    {
-                        "type": "response.failed",
-                        "response": type(
-                            "FailedResponse",
-                            (),
-                            {
-                                "error": type(
-                                    "Failure",
-                                    (),
-                                    {"message": "Bearer provider-secret"},
-                                )()
-                            },
-                        )(),
-                    },
-                )()
+                for event in self.events:
+                    yield event
 
             return events()
 
     responses = type(
         "Responses",
         (),
-        {"stream": lambda self, **kwargs: FailedStream()},
+        {"stream": lambda self, **kwargs: FailedStream(provider_events)},
     )()
     llm = OpenAIService(
         settings().model_copy(update={"openai_api_key": "test-key"}),

@@ -72,7 +72,7 @@ class OpenAIService:
                     if event_type == "response.output_text.delta":
                         delta = getattr(event, "delta", "")
                         if delta:
-                            text_seen = True
+                            text_seen = text_seen or bool(delta.strip())
                             yield delta
                     elif event_type in {
                         "error",
