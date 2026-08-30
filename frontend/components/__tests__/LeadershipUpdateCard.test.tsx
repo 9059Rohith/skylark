@@ -33,6 +33,17 @@ it("copies the backend-authored Markdown and announces success", async () => {
   expect(screen.getByRole("status")).toHaveTextContent("Copied");
 });
 
+it("announces an accessible failure when clipboard access is rejected", async () => {
+  const user = userEvent.setup();
+  vi.spyOn(navigator.clipboard, "writeText").mockRejectedValueOnce(new Error("permission denied"));
+  render(<LeadershipUpdateCard update={update} />);
+
+  await user.click(screen.getByRole("button", { name: /copy as markdown/i }));
+
+  expect(await screen.findByRole("alert")).toHaveTextContent("Could not copy the update");
+  expect(screen.getByRole("button", { name: /copy as markdown/i })).toBeEnabled();
+});
+
 it("renders the complete leadership draft including all sectors, risks, and quality footnote", () => {
   render(<LeadershipUpdateCard update={update} />);
   const headline = screen.getByText("Headline pipeline").parentElement;

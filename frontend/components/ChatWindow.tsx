@@ -276,7 +276,7 @@ export function ChatWindow() {
             onClose={closeEvidence}
           />
         </div>
-        <button className="drawer-backdrop" aria-label="Dismiss evidence overlay" onClick={closeEvidence} />
+        <div className="drawer-backdrop" aria-hidden="true" tabIndex={-1} onPointerDown={closeEvidence} />
       </> : null}
     </div>
   );

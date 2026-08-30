@@ -142,6 +142,7 @@ button, a, summary { -webkit-tap-highlight-color: transparent; }
 .leadership-footer i { display: inline-block; width: 6px; height: 6px; margin-right: 7px; border-radius: 50%; background: var(--amber); }
 .outline-button { display: flex; align-items: center; gap: 8px; margin-left: auto; padding: 8px 12px; border: 1px solid var(--lime); border-radius: 6px; background: #07110f; cursor: pointer; font-size: 12px; }
 .outline-button:hover { background: #16261a; }
+.copy-feedback { margin: 9px 0 0; color: #fac6ba; font-size: 11px; }
 
 .composer-wrap { padding: 0 clamp(22px, 3.5vw, 58px) 14px; background: linear-gradient(transparent, var(--ink-deep) 16%); }
 .composer { padding: 13px 14px 11px; border: 1px solid #486158; border-radius: 9px; background: #0c1b18; }

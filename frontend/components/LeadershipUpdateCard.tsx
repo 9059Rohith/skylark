@@ -8,7 +8,7 @@ import type { LeadershipUpdate } from "@/lib/types";
 type Props = { update: LeadershipUpdate };
 
 export function LeadershipUpdateCard({ update }: Props) {
-  const [copied, setCopied] = useState(false);
+  const [copyState, setCopyState] = useState<"idle" | "copied" | "error">("idle");
   const cardId = useId();
   const titleId = `${cardId}-leadership-title`;
   const currency = (value: string | number) => new Intl.NumberFormat("en-IN", {
@@ -18,9 +18,14 @@ export function LeadershipUpdateCard({ update }: Props) {
   }).format(Number(value));
 
   async function copyMarkdown() {
-    await navigator.clipboard.writeText(update.markdown);
-    setCopied(true);
-    window.setTimeout(() => setCopied(false), 2000);
+    setCopyState("idle");
+    try {
+      await navigator.clipboard.writeText(update.markdown);
+      setCopyState("copied");
+      window.setTimeout(() => setCopyState("idle"), 2000);
+    } catch {
+      setCopyState("error");
+    }
   }
 
   return (
@@ -60,13 +65,16 @@ export function LeadershipUpdateCard({ update }: Props) {
       <div className="leadership-footer">
         <span><i aria-hidden="true" /> Draft · Not sent</span>
         <button type="button" className="outline-button" onClick={copyMarkdown}>
-          {copied ? <Check aria-hidden="true" size={16} /> : <Copy aria-hidden="true" size={16} />}
-          {copied ? "Copied" : "Copy as Markdown"}
+          {copyState === "copied" ? <Check aria-hidden="true" size={16} /> : <Copy aria-hidden="true" size={16} />}
+          {copyState === "copied" ? "Copied" : "Copy as Markdown"}
         </button>
         <span className="sr-only" role="status" aria-live="polite">
-          {copied ? "Copied to clipboard" : ""}
+          {copyState === "copied" ? "Copied to clipboard" : ""}
         </span>
       </div>
+      {copyState === "error" ? (
+        <p className="copy-feedback" role="alert">Could not copy the update. Check clipboard permission and try again.</p>
+      ) : null}
     </section>
   );
 }

@@ -53,7 +53,10 @@ it("announces streaming errors and allows a retry without losing the failed prom
     .mockResolvedValueOnce(
       sseResponse(['event: error\ndata: {"event":"error","code":"upstream","message":"Monday is temporarily unavailable."}\n\n']),
     )
-    .mockResolvedValueOnce(sseResponse(['event: token\ndata: {"event":"token","token":"Recovered."}\n\n']));
+    .mockResolvedValueOnce(sseResponse([
+      'event: token\ndata: {"event":"token","token":"Recovered."}\n\n',
+      'event: done\ndata: {"event":"done","session_id":"x","intent":"pipeline_health"}\n\n',
+    ]));
   render(<ChatWindow />);
 
   await user.type(screen.getByRole("textbox"), "Show pipeline");
@@ -62,6 +65,7 @@ it("announces streaming errors and allows a retry without losing the failed prom
 
   await user.click(screen.getByRole("button", { name: /retry/i }));
   expect(await screen.findByText("Recovered.")).toBeVisible();
+  expect(screen.queryByText(/ended before completion/i)).not.toBeInTheDocument();
 });
 
 it("rotates the session identifier when starting a new conversation", async () => {
@@ -103,6 +107,15 @@ it("uses a modal evidence dialog with focus containment, Escape close, and focus
   expect(screen.queryByRole("dialog", { name: /evidence and data quality/i })).not.toBeInTheDocument();
   expect(trigger).toHaveFocus();
   expect(trigger).toHaveAttribute("aria-expanded", "false");
+
+  await user.click(trigger);
+  const backdrop = document.querySelector(".drawer-backdrop");
+  expect(backdrop).toBeInstanceOf(HTMLDivElement);
+  expect(backdrop).toHaveAttribute("aria-hidden", "true");
+  expect(backdrop).toHaveAttribute("tabindex", "-1");
+  await user.click(backdrop as HTMLElement);
+  expect(screen.queryByRole("dialog", { name: /evidence and data quality/i })).not.toBeInTheDocument();
+  expect(trigger).toHaveFocus();
 });
 
 it("keeps the transcript out of the live region while announcing new assistant text", async () => {
