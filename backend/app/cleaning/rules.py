@@ -23,6 +23,8 @@ SECTOR_ALIASES = {
     "insurance": "Financial Services",
     "healthcare": "Healthcare",
     "health care": "Healthcare",
+    "energy": "Energy",
+    "energy sector": "Energy",
     "manufacturing": "Manufacturing",
     "retail": "Retail",
     "professional services": "Professional Services",

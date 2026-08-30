@@ -9,7 +9,11 @@ from app.cleaning.normalizer import (
     normalize_sector,
 )
 from app.cleaning.quality_report import DataQualityReport
-from app.cleaning.rules import DuplicateCandidate, find_duplicate_candidates
+from app.cleaning.rules import (
+    SECTOR_FUZZY_THRESHOLD,
+    DuplicateCandidate,
+    find_duplicate_candidates,
+)
 
 
 @pytest.mark.parametrize(
@@ -72,8 +76,11 @@ def test_normalize_date_flags_invalid_values(raw_value: str) -> None:
     [
         ("INR 1,25,000", Decimal("125000")),
         ("₹12.50 L", Decimal("1250000")),
+        ("1.2L", Decimal("120000")),
+        ("₹15,00,000", Decimal("1500000")),
         ("2 Cr", Decimal("20000000")),
         ("750k", Decimal("750000")),
+        ("125000", Decimal("125000")),
     ],
 )
 def test_normalize_currency_converts_inr_values_to_base_units(
@@ -87,11 +94,20 @@ def test_normalize_currency_converts_inr_values_to_base_units(
     assert normalized.reason is None
 
 
-def test_normalize_currency_converts_dollars_with_the_supplied_rate() -> None:
+@pytest.mark.parametrize(
+    ("raw_value", "rate", "expected"),
+    [
+        ("$1,250", Decimal("83.25"), Decimal("104062.50")),
+        ("$50k", Decimal("83"), Decimal("4150000")),
+    ],
+)
+def test_normalize_currency_converts_dollars_with_the_supplied_rate(
+    raw_value: str, rate: Decimal, expected: Decimal
+) -> None:
     """Ignoring the supplied exchange rate misstates INR pipeline value."""
-    normalized = normalize_currency("$1,250", usd_to_inr_rate=Decimal("83.25"))
+    normalized = normalize_currency(raw_value, usd_to_inr_rate=rate)
 
-    assert normalized.value == Decimal("104062.50")
+    assert normalized.value == expected
     assert normalized.is_valid is True
     assert normalized.reason is None
 
@@ -139,6 +155,20 @@ def test_normalize_sector_maps_known_aliases(raw_value: str, expected: str) -> N
     assert normalized.value == expected
     assert normalized.is_valid is True
     assert normalized.reason is None
+
+
+@pytest.mark.parametrize("raw_value", ["energy", "Energy ", "ENERGY SECTOR", "Enrgy"])
+def test_normalize_sector_maps_energy_aliases_and_typo_with_high_confidence(
+    raw_value: str,
+) -> None:
+    """Missing Energy labels breaks the primary pipeline-health archetype."""
+    normalized = normalize_sector(raw_value)
+
+    assert normalized.value == "Energy"
+    assert normalized.is_valid is True
+    assert normalized.reason is None
+    assert normalized.confidence is not None
+    assert normalized.confidence >= SECTOR_FUZZY_THRESHOLD
 
 
 def test_normalize_sector_accepts_high_confidence_fuzzy_match() -> None:
