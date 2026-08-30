@@ -11,6 +11,7 @@ dependencies = [
     "fastapi==0.141.1",
     "httpx==0.28.1",
     "langgraph==1.2.8",
+    "openai==2.54.0",
     "pydantic==2.12.3",
     "pydantic-settings==2.12.0",
     "rapidfuzz==3.14.5",

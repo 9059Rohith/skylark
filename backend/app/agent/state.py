@@ -4,8 +4,6 @@ from typing import Any, TypedDict
 
 
 class AgentState(TypedDict, total=False):
-    message: str
-    session_id: str
     intent: str
     period: dict[str, Any] | None
     sector: str | None
@@ -22,3 +20,10 @@ class AgentState(TypedDict, total=False):
     answer: str
     leadership_update: dict[str, Any] | None
     node_trace: list[str]
+
+
+class AgentContext(TypedDict):
+    """Ephemeral request input that must never enter checkpointed channels."""
+
+    message: str
+    session_id: str

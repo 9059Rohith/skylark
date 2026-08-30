@@ -13,7 +13,7 @@ from langgraph.checkpoint.memory import InMemorySaver
 from langgraph.graph import END, START, StateGraph
 
 from app.agent.nodes import AgentServiceError, GraphNodes
-from app.agent.state import AgentState
+from app.agent.state import AgentContext, AgentState
 from app.api_models import (
     CaveatsEvent,
     DoneEvent,
@@ -29,7 +29,7 @@ from app.leadership import LeadershipUpdate
 from app.monday import MondayClient
 
 
-class ClaudeBoundary(Protocol):
+class LLMBoundary(Protocol):
     configured: bool
 
     async def parse_intent(self, message: str, context: dict[str, Any]) -> Any: ...
@@ -50,7 +50,7 @@ def _default_clock(settings: Settings) -> Callable[[], datetime]:
 class AgentDependencies:
     monday: MondayClient
     settings: Settings
-    claude: ClaudeBoundary | None = None
+    llm: LLMBoundary | None = None
     clock: Callable[[], datetime] | None = None
     monotonic: Callable[[], float] = time.monotonic
     checkpointer_factory: Callable[[], Any] = field(default=create_checkpointer)
@@ -63,7 +63,7 @@ class AgentDependencies:
 def build_graph(dependencies: AgentDependencies, *, checkpointer: Any | None = None) -> Any:
     """Build the required named graph with one conditional clarification exit."""
     nodes = GraphNodes(dependencies)
-    builder = StateGraph(AgentState)
+    builder = StateGraph(AgentState, context_schema=AgentContext)
     builder.add_node("parse_intent", nodes.parse_intent)
     builder.add_node("clarify", nodes.clarify)
     builder.add_node("plan_data_needs", nodes.plan_data_needs)
@@ -133,32 +133,39 @@ class AgentRunner:
         if not self._owns_dependencies:
             return
         monday_close = getattr(self._dependencies.monday, "aclose", None)
-        claude_close = getattr(self._dependencies.claude, "aclose", None)
-        if monday_close is not None:
-            await monday_close()
-        if claude_close is not None:
-            await claude_close()
+        llm_close = getattr(self._dependencies.llm, "aclose", None)
+        closers = [close() for close in (monday_close, llm_close) if close is not None]
+        if closers:
+            await asyncio.gather(*closers, return_exceptions=True)
 
     async def run_agent(
         self, message: str, session_id: str
     ) -> dict[str, Any]:
         session_id = validate_session_id(session_id)
-        await self._sessions.touch(session_id)
-        return await self.graph.ainvoke(
-            {"message": message, "session_id": session_id},
-            config={"configurable": {"thread_id": session_id}},
-        )
+        await self._sessions.acquire(session_id)
+        try:
+            return await self.graph.ainvoke(
+                {},
+                config={"configurable": {"thread_id": session_id}},
+                context={"message": message, "session_id": session_id},
+            )
+        finally:
+            await self._sessions.release(session_id)
 
     async def stream_agent(
         self, message: str, session_id: str
     ) -> AsyncIterator[object]:
         final_update: dict[str, Any] = {}
+        acquired = False
+        normalized_session_id = session_id
         try:
-            session_id = validate_session_id(session_id)
-            await self._sessions.touch(session_id)
+            normalized_session_id = validate_session_id(session_id)
+            await self._sessions.acquire(normalized_session_id)
+            acquired = True
             async for mode, chunk in self.graph.astream(
-                {"message": message, "session_id": session_id},
-                config={"configurable": {"thread_id": session_id}},
+                {},
+                config={"configurable": {"thread_id": normalized_session_id}},
+                context={"message": message, "session_id": normalized_session_id},
                 stream_mode=["updates", "custom"],
             ):
                 if mode == "custom" and chunk.get("event") == "token":
@@ -185,16 +192,23 @@ class AgentRunner:
                                     )
                                 )
             yield DoneEvent(
-                session_id=session_id,
+                session_id=normalized_session_id,
                 intent=str(final_update.get("intent", "unknown")),
             )
         except AgentServiceError as error:
+            if error.sources:
+                yield SourcesEvent(sources=error.sources)
+            if error.caveats or error.quality is not None:
+                yield CaveatsEvent(caveats=error.caveats, quality=error.quality)
             yield ErrorEvent(code=error.code, message=str(error))
         except Exception:
             yield ErrorEvent(
                 code="internal_error",
                 message="The request could not be completed. Please try again.",
             )
+        finally:
+            if acquired:
+                await self._sessions.release(normalized_session_id)
 
 
 class _SessionRegistry:
@@ -210,25 +224,58 @@ class _SessionRegistry:
         self._max_sessions = max_sessions
         self._ttl_seconds = ttl_seconds
         self._monotonic = monotonic
-        self._last_seen: OrderedDict[str, float] = OrderedDict()
+        self._sessions: OrderedDict[str, _SessionEntry] = OrderedDict()
         self._lock = asyncio.Lock()
 
-    async def touch(self, session_id: str) -> None:
+    async def acquire(self, session_id: str) -> None:
         async with self._lock:
             now = self._monotonic()
             expired = [
                 thread_id
-                for thread_id, touched_at in self._last_seen.items()
-                if now - touched_at >= self._ttl_seconds
+                for thread_id, entry in self._sessions.items()
+                if entry.active == 0 and now - entry.last_seen >= self._ttl_seconds
             ]
             for thread_id in expired:
                 await self._checkpointer.adelete_thread(thread_id)
-                self._last_seen.pop(thread_id, None)
-            if session_id not in self._last_seen and len(self._last_seen) >= self._max_sessions:
-                oldest, _ = self._last_seen.popitem(last=False)
-                await self._checkpointer.adelete_thread(oldest)
-            self._last_seen.pop(session_id, None)
-            self._last_seen[session_id] = now
+                self._sessions.pop(thread_id, None)
+            entry = self._sessions.get(session_id)
+            if entry is not None:
+                entry.active += 1
+                entry.last_seen = now
+                self._sessions.move_to_end(session_id)
+                return
+            if len(self._sessions) >= self._max_sessions:
+                inactive = next(
+                    (
+                        thread_id
+                        for thread_id, candidate in self._sessions.items()
+                        if candidate.active == 0
+                    ),
+                    None,
+                )
+                if inactive is None:
+                    raise AgentServiceError(
+                        "The server is at its active session limit. Please retry shortly.",
+                        code="session_capacity",
+                    )
+                await self._checkpointer.adelete_thread(inactive)
+                self._sessions.pop(inactive, None)
+            self._sessions[session_id] = _SessionEntry(last_seen=now, active=1)
+
+    async def release(self, session_id: str) -> None:
+        async with self._lock:
+            entry = self._sessions.get(session_id)
+            if entry is None:
+                return
+            entry.active = max(0, entry.active - 1)
+            entry.last_seen = self._monotonic()
+            self._sessions.move_to_end(session_id)
+
+
+@dataclass
+class _SessionEntry:
+    last_seen: float
+    active: int = 0
 
 
 _default_runner: AgentRunner | None = None

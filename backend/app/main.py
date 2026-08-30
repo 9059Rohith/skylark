@@ -8,8 +8,8 @@ from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 
-from app.agent.claude import ClaudeService
 from app.agent.graph import AgentDependencies, AgentRunner
+from app.agent.llm import create_llm_service
 from app.api_models import ChatRequest, ErrorEvent, SSEEvent
 from app.config import Settings
 from app.monday import GraphQLMondayClient
@@ -31,9 +31,14 @@ def _default_agent(settings: Settings) -> StreamingAgent:
     if not settings.monday_api_token:
         return _UnavailableAgent("monday.com access is not configured on this server.")
     monday = GraphQLMondayClient(settings.monday_api_token)
-    claude = ClaudeService(settings) if settings.anthropic_api_key else None
+    provider_key = (
+        settings.anthropic_api_key
+        if settings.llm_provider == "anthropic"
+        else settings.openai_api_key
+    )
+    llm = create_llm_service(settings) if provider_key else None
     return AgentRunner(
-        AgentDependencies(monday=monday, settings=settings, claude=claude),
+        AgentDependencies(monday=monday, settings=settings, llm=llm),
         owns_dependencies=True,
     )
 
@@ -85,8 +90,13 @@ def create_app(
             missing.append("MONDAY_DEALS_BOARD_ID")
         if not active_settings.work_orders_board_id:
             missing.append("MONDAY_WORK_ORDERS_BOARD_ID")
-        if not active_settings.anthropic_api_key:
+        if (
+            active_settings.llm_provider == "anthropic"
+            and not active_settings.anthropic_api_key
+        ):
             missing.append("ANTHROPIC_API_KEY")
+        if active_settings.llm_provider == "openai" and not active_settings.openai_api_key:
+            missing.append("OPENAI_API_KEY")
         missing.extend(getattr(application.state, "runtime_missing", []))
         return {"status": "degraded" if missing else "ready", "missing": missing}
 

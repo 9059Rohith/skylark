@@ -8,3 +8,4 @@ fastapi==0.141.1
 uvicorn[standard]==0.41.0
 langgraph==1.2.8
 anthropic==0.75.0
+openai==2.54.0

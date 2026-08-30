@@ -70,7 +70,7 @@ def test_health_is_ready_without_exposing_configuration_or_secrets() -> None:
     assert response.status_code == 200
     assert response.json() == {
         "status": "degraded",
-        "missing": ["MONDAY_API_TOKEN", "ANTHROPIC_API_KEY"],
+        "missing": ["MONDAY_API_TOKEN", "OPENAI_API_KEY"],
     }
 
 
@@ -79,7 +79,7 @@ def test_health_reports_ready_only_when_all_required_configuration_exists() -> N
     settings = api_settings().model_copy(
         update={
             "monday_api_token": "monday-secret",
-            "anthropic_api_key": "anthropic-secret",
+            "openai_api_key": "openai-secret",
         }
     )
     client = TestClient(create_app(agent=FakeStreamingAgent(), settings=settings))
@@ -96,7 +96,7 @@ def test_health_lists_every_missing_required_integration_setting() -> None:
         MONDAY_DEALS_BOARD_ID="",
         MONDAY_WORK_ORDERS_BOARD_ID="",
         monday_api_token=None,
-        anthropic_api_key=None,
+        openai_api_key=None,
     )
     client = TestClient(create_app(agent=FakeStreamingAgent(), settings=settings))
 
@@ -106,9 +106,26 @@ def test_health_lists_every_missing_required_integration_setting() -> None:
             "MONDAY_API_TOKEN",
             "MONDAY_DEALS_BOARD_ID",
             "MONDAY_WORK_ORDERS_BOARD_ID",
-            "ANTHROPIC_API_KEY",
+            "OPENAI_API_KEY",
         ],
     }
+
+
+def test_health_uses_the_selected_anthropic_provider_key() -> None:
+    """Readiness must require only the credential for the selected LLM adapter."""
+    settings = Settings(
+        llm_provider="anthropic",
+        MONDAY_DEALS_BOARD_ID="101",
+        MONDAY_WORK_ORDERS_BOARD_ID="202",
+        monday_api_token="monday-secret",
+        anthropic_api_key="anthropic-secret",
+    )
+
+    response = TestClient(
+        create_app(agent=FakeStreamingAgent(), settings=settings)
+    ).get("/health")
+
+    assert response.json() == {"status": "ready", "missing": []}
 
 
 def test_chat_streams_every_typed_sse_event_with_board_counts() -> None:

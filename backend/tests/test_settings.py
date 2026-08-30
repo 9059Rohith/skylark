@@ -23,3 +23,16 @@ def test_legacy_unprefixed_board_id_environment_names_are_not_consumed(monkeypat
 
     assert settings.deals_board_id == ""
     assert settings.work_orders_board_id == ""
+
+
+def test_openai_provider_environment_contract_is_bound(monkeypatch) -> None:
+    """Production defaults and credentials must bind from the documented env names."""
+    monkeypatch.setenv("LLM_PROVIDER", "openai")
+    monkeypatch.setenv("OPENAI_API_KEY", "test-openai-key")
+    monkeypatch.setenv("OPENAI_MODEL", "gpt-5.4-mini")
+
+    settings = Settings(_env_file=None)
+
+    assert settings.llm_provider == "openai"
+    assert settings.openai_api_key == "test-openai-key"
+    assert settings.openai_model == "gpt-5.4-mini"

@@ -235,6 +235,21 @@ def test_won_deal_gap_reports_missing_match_keys_as_quality_exclusions() -> None
     assert result.quality.exclusions == {"missing_match_key": 1}
 
 
+def test_cross_board_quality_excludes_work_orders_without_any_match_key() -> None:
+    """Unkeyed work orders are source rows but not usable cross-board evidence."""
+    result = won_deals_without_work_orders(
+        [{"id": "d-1", "name": "Acme", "client": "Acme", "stage": "Won"}],
+        [
+            {"id": "wo-1", "deal_id": "d-1", "client": ""},
+            {"id": "wo-2", "deal_id": "", "client": "  "},
+        ],
+    )
+
+    assert result.quality.total_rows == 3
+    assert result.quality.included_rows == 2
+    assert result.quality.exclusions == {"work_order:missing_match_key": 1}
+
+
 def test_intelligence_accepts_dates_as_typed_values_after_transport_normalization() -> None:
     """Metrics should retain compatibility with already-normalized internal values."""
     result = average_work_order_completion_time(

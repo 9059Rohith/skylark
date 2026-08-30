@@ -1,6 +1,6 @@
 """Environment-backed application settings with bounded public inputs."""
 
-from typing import Annotated, Any
+from typing import Annotated, Any, Literal
 
 from pydantic import Field, field_validator
 from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
@@ -20,12 +20,18 @@ class Settings(BaseSettings):
     work_orders_board_id: str = Field(
         default="", alias="MONDAY_WORK_ORDERS_BOARD_ID"
     )
+    llm_provider: Literal["openai", "anthropic"] = "openai"
+    openai_api_key: str | None = None
+    openai_model: str = "gpt-5.4-mini"
+    openai_timeout_seconds: float = Field(default=20.0, gt=0, le=120)
+    openai_max_retries: int = Field(default=2, ge=0, le=5)
+    openai_max_tokens: int = Field(default=700, ge=64, le=4096)
     anthropic_api_key: str | None = None
     anthropic_model: str = "claude-sonnet-5"
     anthropic_timeout_seconds: float = Field(default=20.0, gt=0, le=120)
     anthropic_max_retries: int = Field(default=2, ge=0, le=5)
     anthropic_max_tokens: int = Field(default=700, ge=64, le=4096)
-    anthropic_context_max_chars: int = Field(default=1200, ge=100, le=4000)
+    llm_context_max_chars: int = Field(default=1200, ge=100, le=4000)
     deterministic_synthesis_fallback: bool = False
     usd_to_inr_rate: str | None = None
     fiscal_year_start_month: int = Field(default=1, ge=1, le=12)
@@ -39,7 +45,9 @@ class Settings(BaseSettings):
         default=3600.0, gt=0, le=2_592_000
     )
 
-    @field_validator("monday_api_token", "anthropic_api_key", mode="before")
+    @field_validator(
+        "monday_api_token", "openai_api_key", "anthropic_api_key", mode="before"
+    )
     @classmethod
     def empty_secret_is_none(cls, value: Any) -> Any:
         if isinstance(value, str) and not value.strip():

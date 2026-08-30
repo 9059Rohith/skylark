@@ -198,7 +198,7 @@ def dependencies(monday: FakeMonday, claude: FakeClaude | None = None) -> AgentD
     return AgentDependencies(
         monday=monday,
         settings=settings(),
-        claude=claude,
+        llm=claude,
         clock=lambda: datetime(2026, 8, 30, 11, 0, tzinfo=ZoneInfo("Asia/Kolkata")),
     )
 
@@ -210,8 +210,12 @@ async def test_graph_runs_required_nodes_in_order_and_maps_live_column_titles() 
     graph = build_graph(dependencies(monday))
 
     result = await graph.ainvoke(
-        {"message": "How healthy is our pipeline this quarter?", "session_id": "s-1"},
+        {},
         config={"configurable": {"thread_id": "s-1"}},
+        context={
+            "message": "How healthy is our pipeline this quarter?",
+            "session_id": "s-1",
+        },
     )
 
     assert result["node_trace"] == [
@@ -236,8 +240,12 @@ async def test_graph_fetches_required_boards_concurrently() -> None:
     graph = build_graph(dependencies(monday))
 
     await graph.ainvoke(
-        {"message": "Which won deals have no work orders?", "session_id": "s-2"},
+        {},
         config={"configurable": {"thread_id": "s-2"}},
+        context={
+            "message": "Which won deals have no work orders?",
+            "session_id": "s-2",
+        },
     )
 
     assert monday.max_active_fetches == 2
@@ -275,18 +283,33 @@ async def test_sector_clarification_direct_answer_reuses_pending_context() -> No
 
 
 @pytest.mark.asyncio
-async def test_data_quality_with_period_asks_one_date_scope_clarification() -> None:
-    """Missing close dates cannot be assigned to a close-date period without guessing."""
+async def test_data_quality_period_clarification_accepts_full_board_answer() -> None:
+    """A direct yes must reuse data-quality intent and discard the impossible period."""
     monday = FakeMonday()
-    result = await AgentRunner(dependencies(monday)).run_agent(
+    runner = AgentRunner(dependencies(monday))
+    result = await runner.run_agent(
         "How many deals are missing close dates this month?", sid(9)
     )
 
     assert result["node_trace"] == ["parse_intent", "clarify"]
     assert result["answer"] == (
-        "Which date field should define the requested period for this data-quality check?"
+        "Rows missing close dates cannot be assigned to a quarter or month. "
+        "Should I report across the full Deals board instead?"
     )
     assert monday.max_active_fetches == 0
+
+    declined = await runner.run_agent("No, keep the original scope", sid(9))
+    assert declined["node_trace"] == ["parse_intent", "clarify"]
+    assert declined["pending_clarification"]["kind"] == "data_quality_full_board"
+    assert monday.max_active_fetches == 0
+
+    answered = await runner.run_agent("Yes, use the full board", sid(9))
+
+    assert answered["intent"] == "data_quality"
+    assert answered["period"] is None
+    assert answered["clarification_question"] is None
+    assert answered["analysis"]["metrics"]["missing_close_date_count"] == 0
+    assert monday.max_active_fetches == 1
 
 
 @pytest.mark.asyncio
@@ -391,6 +414,52 @@ async def test_runner_streams_real_synthesis_deltas_from_langgraph_custom_mode()
 
 
 @pytest.mark.asyncio
+async def test_runner_emits_prefix_and_safe_claude_deltas_before_stream_completion() -> None:
+    """The structural frame must not force Claude context to be buffered until completion."""
+
+    class BlockingClaude(FakeClaude):
+        def __init__(self) -> None:
+            super().__init__()
+            self.release = asyncio.Event()
+            self.completed = False
+
+        async def stream_synthesis(self, payload: dict[str, Any]) -> AsyncIterator[str]:
+            yield "Pipeline composition is concentrated. "
+            await self.release.wait()
+            yield "Execution attention remains important."
+            self.completed = True
+
+    claude = BlockingClaude()
+    runner = AgentRunner(dependencies(FakeMonday(), claude))
+    events: list[Any] = []
+    first_token = asyncio.Event()
+
+    async def collect() -> None:
+        async for event in runner.stream_agent(
+            "How healthy is our pipeline?", sid(37)
+        ):
+            events.append(event)
+            if event.event == "token":
+                first_token.set()
+
+    task = asyncio.create_task(collect())
+    try:
+        await asyncio.wait_for(first_token.wait(), timeout=0.5)
+        assert claude.completed is False
+    finally:
+        claude.release.set()
+        await task
+
+    tokens = [event.token for event in events if event.event == "token"]
+    assert tokens[0].startswith("Total pipeline is INR 21000000")
+    assert "Pipeline composition is concentrated. " in tokens
+    assert "Execution attention remains important." in tokens
+    assembled = "".join(tokens)
+    assert assembled.index("Total pipeline") < assembled.index("Pipeline composition")
+    assert assembled.index("Pipeline composition") < assembled.index("Material caveat:")
+
+
+@pytest.mark.asyncio
 async def test_claude_routing_is_used_only_for_unresolved_intent_and_errors_fall_back() -> None:
     """An LLM routing failure must preserve the deterministic clarification path."""
 
@@ -424,10 +493,17 @@ async def test_unvalidated_claude_numbers_are_not_emitted() -> None:
         async def stream_synthesis(self, payload: dict[str, Any]) -> AsyncIterator[str]:
             yield "There are 999 hidden deals. Only one sentence."
 
-    result = await AgentRunner(
-        dependencies(FakeMonday(), HallucinatingClaude())
-    ).run_agent("How healthy is the pipeline?", sid(19))
+    runner = AgentRunner(dependencies(FakeMonday(), HallucinatingClaude()))
+    events = [
+        event
+        async for event in runner.stream_agent(
+            "How healthy is the pipeline?", sid(19)
+        )
+    ]
+    streamed = "".join(event.token for event in events if event.event == "token")
+    result = await runner.run_agent("How healthy is the pipeline?", sid(19))
 
+    assert "999" not in streamed
     assert "999" not in result["answer"]
     assert result["answer"].startswith("Total pipeline is INR 21000000")
     assert result["answer"].endswith(
@@ -557,6 +633,15 @@ async def test_required_cross_board_auth_failure_emits_error_without_false_metri
     assert events[-1].code == "required_source_unavailable"
     assert "authentication failed" in events[-1].message
     assert "bearer-secret-value" not in events[-1].message
+    source_event = next(event for event in events if event.event == "sources")
+    caveat_event = next(event for event in events if event.event == "caveats")
+    assert [(source.board_name, source.item_count, source.partial) for source in source_event.sources] == [
+        ("Deals", 2, False),
+        ("Work Orders", 0, True),
+    ]
+    assert "authentication failed" in " ".join(caveat_event.caveats)
+    assert "bearer-secret-value" not in " ".join(caveat_event.caveats)
+    assert events.index(source_event) < events.index(caveat_event) < len(events) - 1
     assert not any(event.event in {"token", "done"} for event in events)
 
 

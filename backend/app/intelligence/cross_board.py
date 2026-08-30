@@ -23,15 +23,28 @@ def won_deals_without_work_orders(
     deals: Sequence[Record], work_orders: Sequence[Record]
 ) -> AnalysisResult:
     """Find won deals lacking an exact relation-ID or normalized-client match."""
+    usable_work_orders = []
+    work_order_exclusions: Counter[str] = Counter()
+    for work_order in work_orders:
+        relation_ids = _relation_ids(
+            record_value(work_order, "deal_id", "linked_deal_id")
+        )
+        client = text_value(
+            record_value(work_order, "client", "client_name", "customer")
+        )
+        if not relation_ids and client is None:
+            work_order_exclusions["work_order:missing_match_key"] += 1
+            continue
+        usable_work_orders.append(work_order)
     work_order_deal_ids = set().union(
         *(
             _relation_ids(record_value(work_order, "deal_id", "linked_deal_id"))
-            for work_order in work_orders
+            for work_order in usable_work_orders
         )
     )
     work_order_clients = {
         normalized_key(value)
-        for work_order in work_orders
+        for work_order in usable_work_orders
         if (value := text_value(record_value(work_order, "client", "client_name", "customer")))
     }
 
@@ -40,6 +53,7 @@ def won_deals_without_work_orders(
     matched = 0
     missing: list[dict[str, str | None]] = []
     exclusions: Counter[str] = Counter()
+    exclusions.update(work_order_exclusions)
     for deal in deals:
         stage = text_value(record_value(deal, "stage", "status", "deal_stage"))
         if stage is None or stage.casefold() != "won":
@@ -73,11 +87,11 @@ def won_deals_without_work_orders(
         },
         quality=DataQualityReport(
             total_rows=len(deals) + len(work_orders),
-            included_rows=matchable_count + len(work_orders),
+            included_rows=matchable_count + len(usable_work_orders),
             exclusions=dict(exclusions),
             normalization_notes=[
                 "Work orders match won deals by exact relation ID, then normalized client name.",
-                "Quality accounting includes both target deal rows and all work-order evidence rows.",
+                "Quality accounting includes target deal rows and work orders with a usable relation or client match key.",
             ],
         ),
     )

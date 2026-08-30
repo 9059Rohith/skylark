@@ -1,4 +1,7 @@
+import asyncio
 from datetime import datetime
+import json
+from typing import Any
 from zoneinfo import ZoneInfo
 
 import pytest
@@ -17,6 +20,11 @@ class RecordingSaver(InMemorySaver):
     def __init__(self) -> None:
         super().__init__()
         self.deleted: list[str] = []
+        self.checkpoints: list[dict[str, Any]] = []
+
+    async def aput(self, config, checkpoint, metadata, new_versions):
+        self.checkpoints.append(checkpoint)
+        return await super().aput(config, checkpoint, metadata, new_versions)
 
     async def adelete_thread(self, thread_id: str) -> None:
         self.deleted.append(thread_id)
@@ -71,17 +79,22 @@ async def test_session_registry_prunes_lru_and_expired_checkpoint_threads() -> N
 
 @pytest.mark.asyncio
 async def test_checkpoint_does_not_retain_raw_message_or_client_history() -> None:
-    """The checkpoint needs derived context, not redundant raw conversation content."""
-    runner = AgentRunner(deps(RecordingSaver(), [0]))
+    """No historical superstep may retain the raw prompt as graph state."""
+    saver = RecordingSaver()
+    runner = AgentRunner(deps(saver, [0]))
     session_id = sid(7)
+    raw_prompt = "How healthy is the confidential nebula pipeline?"
 
-    await runner.run_agent("How healthy is the pipeline?", session_id)
+    await runner.run_agent(raw_prompt, session_id)
     state = await runner.graph.aget_state(
         {"configurable": {"thread_id": session_id}}
     )
 
-    assert state.values["message"] == ""
+    assert "message" not in state.values
+    assert "session_id" not in state.values
     assert "history" not in state.values
+    assert saver.checkpoints
+    assert all(raw_prompt not in json.dumps(checkpoint, default=str) for checkpoint in saver.checkpoints)
 
 
 @pytest.mark.asyncio
@@ -97,8 +110,62 @@ async def test_clarification_checkpoint_retains_only_derived_pending_context() -
         {"configurable": {"thread_id": session_id}}
     )
 
-    assert state.values["message"] == ""
+    assert "message" not in state.values
+    assert "session_id" not in state.values
     assert state.values["pending_clarification"]["options"] == [
         "Healthcare",
         "Energy",
     ]
+
+
+@pytest.mark.asyncio
+async def test_active_session_is_pinned_and_excess_concurrency_is_rejected_cleanly() -> None:
+    """A capacity eviction must never delete the thread of an in-flight request."""
+
+    class BlockingMonday(FakeMonday):
+        def __init__(self) -> None:
+            super().__init__()
+            self.entered = asyncio.Event()
+            self.release = asyncio.Event()
+
+        async def get_board_items(self, board_id: str):
+            self.entered.set()
+            await self.release.wait()
+            return await super().get_board_items(board_id)
+
+    saver = RecordingSaver()
+    now = [0.0]
+    dependencies = deps(saver, now, max_sessions=1)
+    monday = BlockingMonday()
+    dependencies = AgentDependencies(
+        monday=monday,
+        settings=dependencies.settings,
+        clock=dependencies.clock,
+        monotonic=dependencies.monotonic,
+        checkpointer_factory=dependencies.checkpointer_factory,
+    )
+    runner = AgentRunner(dependencies)
+    first = asyncio.create_task(
+        runner.run_agent("How healthy is the pipeline?", sid(10))
+    )
+    await monday.entered.wait()
+
+    async def collect_second() -> list[Any]:
+        return [
+            event
+            async for event in runner.stream_agent(
+                "How healthy is the pipeline?", sid(11)
+            )
+        ]
+
+    try:
+        second_events = await asyncio.wait_for(collect_second(), timeout=0.5)
+    finally:
+        monday.release.set()
+        await first
+
+    assert [event.event for event in second_events] == ["error"]
+    assert second_events[0].code == "session_capacity"
+    assert saver.deleted == []
+    assert sid(11) not in saver.storage
+    assert sid(10) in saver.storage

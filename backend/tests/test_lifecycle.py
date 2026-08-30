@@ -33,7 +33,7 @@ def complete_settings() -> Settings:
         MONDAY_DEALS_BOARD_ID="101",
         MONDAY_WORK_ORDERS_BOARD_ID="202",
         monday_api_token="monday-secret",
-        anthropic_api_key="anthropic-secret",
+        openai_api_key="openai-secret",
     )
 
 
@@ -106,7 +106,7 @@ async def test_runner_warms_both_schemas_and_closes_only_owned_dependencies() ->
     claude = ClosableClaude()
     settings = complete_settings()
     owned = AgentRunner(
-        AgentDependencies(monday=monday, settings=settings, claude=claude),
+        AgentDependencies(monday=monday, settings=settings, llm=claude),
         owns_dependencies=True,
     )
     await owned.warmup()
@@ -123,3 +123,33 @@ async def test_runner_warms_both_schemas_and_closes_only_owned_dependencies() ->
     )
     await injected.aclose()
     assert injected_monday.closed == 0
+
+
+@pytest.mark.asyncio
+async def test_runner_closes_each_owned_provider_even_when_one_close_fails() -> None:
+    """One provider cleanup failure must not skip the other owned provider."""
+
+    class FailingCloseMonday(FakeMonday):
+        async def aclose(self) -> None:
+            raise RuntimeError("monday close failed")
+
+    class RecordingClaude:
+        configured = True
+
+        def __init__(self) -> None:
+            self.closed = 0
+
+        async def aclose(self) -> None:
+            self.closed += 1
+
+    claude = RecordingClaude()
+    runner = AgentRunner(
+        AgentDependencies(
+            monday=FailingCloseMonday(), settings=complete_settings(), llm=claude
+        ),
+        owns_dependencies=True,
+    )
+
+    await runner.aclose()
+
+    assert claude.closed == 1

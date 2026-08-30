@@ -9,10 +9,11 @@ import re
 from typing import Any
 
 from langgraph.config import get_stream_writer
+from langgraph.runtime import Runtime
 from pydantic_core import to_jsonable_python
 
 from app.agent.routing import Intent, parse_intent
-from app.agent.state import AgentState
+from app.agent.state import AgentContext, AgentState
 from app.cleaning import normalize_date, normalize_sector
 from app.cleaning.quality_report import DataQualityReport
 from app.intelligence import (
@@ -49,9 +50,20 @@ WORK_ORDER_TITLE_ALIASES = {
 class AgentServiceError(RuntimeError):
     """A clean, classified graph failure safe to expose through SSE."""
 
-    def __init__(self, message: str, *, code: str = "agent_error") -> None:
+    def __init__(
+        self,
+        message: str,
+        *,
+        code: str = "agent_error",
+        sources: list[dict[str, Any]] | None = None,
+        caveats: list[str] | None = None,
+        quality: DataQualityReport | None = None,
+    ) -> None:
         super().__init__(message)
         self.code = code
+        self.sources = sources or []
+        self.caveats = caveats or []
+        self.quality = quality
 
 
 def _normalized_title(title: str) -> str:
@@ -195,28 +207,28 @@ def _deterministic_context() -> str:
     )
 
 
-def _bounded_context(raw: str, max_chars: int) -> str:
-    normalized = " ".join(raw.split())[:max_chars].strip()
-    sentences = [
-        sentence.strip()
-        for sentence in re.split(r"(?<=[.!?])\s+", normalized)
-        if sentence.strip()
-    ]
-    if not 2 <= len(sentences) <= 4 or any(
-        character.isdigit() for character in normalized
-    ):
-        return _deterministic_context()
-    return " ".join(sentences[:4])
+def _sentence_count(value: str) -> int:
+    return len(re.findall(r"[.!?](?=\s|$)", value))
+
+
+def _up_to_four_sentences(value: str) -> str:
+    endings = list(re.finditer(r"[.!?](?=\s|$)", value))
+    if len(endings) <= 4:
+        return value
+    return value[: endings[3].end()]
 
 
 class GraphNodes:
     def __init__(self, dependencies: Any) -> None:
         self.dependencies = dependencies
 
-    async def parse_intent(self, state: AgentState) -> dict[str, Any]:
+    async def parse_intent(
+        self, state: AgentState, runtime: Runtime[AgentContext]
+    ) -> dict[str, Any]:
+        message = runtime.context["message"]
         now = self.dependencies.clock()
         decision = parse_intent(
-            state["message"],
+            message,
             prior_intent=state.get("intent"),
             prior_period=state.get("period"),
             pending_clarification=state.get("pending_clarification"),
@@ -229,13 +241,13 @@ class GraphNodes:
             else None
         )
         if (
-            self.dependencies.claude is not None
+            self.dependencies.llm is not None
             and decision.clarification_question
             and pending_kind == "intent"
         ):
             try:
-                suggestion = await self.dependencies.claude.parse_intent(
-                    state["message"],
+                suggestion = await self.dependencies.llm.parse_intent(
+                    message,
                     {"intent": state.get("intent"), "period": state.get("period")},
                 )
             except Exception:
@@ -252,7 +264,6 @@ class GraphNodes:
                 except ValueError:
                     pass
         return {
-            "message": "",
             "intent": decision.intent.value,
             "period": decision.period.model_dump(mode="json") if decision.period else None,
             "sector": decision.sector,
@@ -358,11 +369,15 @@ class GraphNodes:
             raise AgentServiceError(
                 caveats[0] if caveats else "A required monday.com board could not be read.",
                 code="required_source_unavailable",
+                sources=sources,
+                caveats=caveats,
             )
         if not fetched:
             raise AgentServiceError(
                 caveats[0] if caveats else "No required monday.com board could be read.",
                 code="data_source_unavailable",
+                sources=sources,
+                caveats=caveats,
             )
         return {
             "fetched": fetched,
@@ -475,28 +490,63 @@ class GraphNodes:
             "caveats": state.get("caveats", []),
         }
         writer = get_stream_writer()
+        direct = _direct_answer(state)
+        writer({"event": "token", "token": f"{direct} "})
         context_pieces: list[str] = []
-        if self.dependencies.claude is not None:
-            async for piece in self.dependencies.claude.stream_synthesis(payload):
-                context_pieces.append(piece)
+        context_length = 0
+        sentence_count = 0
+        max_chars = self.dependencies.settings.llm_context_max_chars
+        if self.dependencies.llm is not None:
+            async for piece in self.dependencies.llm.stream_synthesis(payload):
+                if any(character.isdigit() for character in piece):
+                    break
+                remaining = max_chars - context_length
+                if remaining <= 0 or sentence_count >= 4:
+                    break
+                candidate = _up_to_four_sentences(piece[:remaining])
+                allowed_sentences = 4 - sentence_count
+                if _sentence_count(candidate) > allowed_sentences:
+                    endings = list(re.finditer(r"[.!?](?=\s|$)", candidate))
+                    candidate = candidate[: endings[allowed_sentences - 1].end()]
+                if candidate:
+                    writer({"event": "token", "token": candidate})
+                    context_pieces.append(candidate)
+                    context_length += len(candidate)
+                    sentence_count += _sentence_count(candidate)
+                if len(candidate) < len(piece) or sentence_count >= 4:
+                    break
         elif self.dependencies.settings.deterministic_synthesis_fallback:
-            context_pieces.append(_deterministic_context())
+            fallback = _deterministic_context()
+            writer({"event": "token", "token": fallback})
+            context_pieces.append(fallback)
+            sentence_count = 2
         else:
             raise AgentServiceError(
                 "Claude is not configured and deterministic fallback is disabled.",
                 code="configuration",
             )
-        context = _bounded_context(
-            "".join(context_pieces),
-            self.dependencies.settings.anthropic_context_max_chars,
+        context = "".join(context_pieces).strip()
+        if context and context[-1] not in ".!?" and sentence_count < 4:
+            writer({"event": "token", "token": "."})
+            context += "."
+            sentence_count += 1
+        filler_sentences = (
+            "The result uses normalized live board fields.",
+            "Source provenance and quality accounting remain attached to this answer.",
         )
-        parts = (_direct_answer(state), context, _material_caveat(state))
-        for index, part in enumerate(parts):
-            writer({"event": "token", "token": part + (" " if index < 2 else "")})
+        for filler in filler_sentences:
+            if sentence_count >= 2:
+                break
+            separator = " " if context else ""
+            writer({"event": "token", "token": f"{separator}{filler}"})
+            context = f"{context}{separator}{filler}"
+            sentence_count += 1
+        material_caveat = _material_caveat(state)
+        writer({"event": "token", "token": f" {material_caveat}"})
         return {
-            "answer": " ".join(parts),
+            "answer": f"{direct} {context} {material_caveat}",
             "node_trace": _trace(state, "synthesize_answer"),
         }
 
     async def format_response(self, state: AgentState) -> dict[str, Any]:
-        return {"message": "", "node_trace": _trace(state, "format_response")}
+        return {"node_trace": _trace(state, "format_response")}

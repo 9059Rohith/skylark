@@ -112,14 +112,33 @@ def parse_intent(
         if pending_clarification
         else []
     )
+    pending_intent = (
+        str(pending_clarification.get("intent"))
+        if pending_clarification and pending_clarification.get("intent")
+        else None
+    )
+    full_board_quality_resolution = pending_kind == "data_quality_full_board" and any(
+        phrase in lowered
+        for phrase in (
+            "yes",
+            "full board",
+            "all deals",
+            "whole board",
+            "go ahead",
+            "proceed",
+        )
+    )
     sector_resolution = (
         pending_kind == "sector"
         and len(mentioned_sectors) == 1
         and mentioned_sectors[0] in pending_options
     )
     recognized = False
-    if sector_resolution and prior_intent is not None:
-        intent = Intent(prior_intent)
+    if full_board_quality_resolution and (pending_intent or prior_intent) is not None:
+        intent = Intent(pending_intent or prior_intent)
+        recognized = True
+    elif sector_resolution and (pending_intent or prior_intent) is not None:
+        intent = Intent(pending_intent or prior_intent)
         recognized = True
     elif follow_up and prior_intent is not None:
         intent = Intent(prior_intent)
@@ -140,23 +159,33 @@ def parse_intent(
     elif any(word in lowered for word in ("missing", "quality", "invalid", "duplicate")):
         intent = Intent.DATA_QUALITY
         recognized = True
+    elif pending_kind in {"sector", "data_quality_full_board"} and pending_intent:
+        intent = Intent(pending_intent)
+        recognized = True
     else:
         intent = Intent.PIPELINE_HEALTH
         recognized = any(word in lowered for word in ("pipeline", "deal", "revenue"))
 
     sectors = mentioned_sectors
+    contextual_period = (
+        pending_clarification.get("period")
+        if pending_clarification and pending_clarification.get("period")
+        else prior_period
+    )
     period = (
-        Period.model_validate(prior_period)
-        if (follow_up or sector_resolution) and prior_period
+        Period.model_validate(contextual_period)
+        if (follow_up or sector_resolution) and contextual_period
         else None
     )
-    if period is None and now is not None:
+    if period is None and now is not None and not full_board_quality_resolution:
         period = resolve_period(
             message, now=now, fiscal_year_start_month=fiscal_year_start_month
         )
     clarification = None
     pending: dict[str, object] | None = None
-    if len(sectors) > 1:
+    if full_board_quality_resolution:
+        period = None
+    elif len(sectors) > 1:
         clarification = f"Which sector should I use: {' or '.join(sectors)}?"
         pending = {
             "kind": "sector",
@@ -167,13 +196,20 @@ def parse_intent(
     elif pending_kind == "sector" and not sector_resolution:
         clarification = f"Which sector should I use: {' or '.join(pending_options)}?"
         pending = pending_clarification
+    elif pending_kind == "data_quality_full_board":
+        clarification = (
+            "Rows missing close dates cannot be assigned to a quarter or month. "
+            "Should I report across the full Deals board instead?"
+        )
+        pending = pending_clarification
     elif intent == Intent.DATA_QUALITY and period is not None:
         clarification = (
-            "Which date field should define the requested period for this data-quality check?"
+            "Rows missing close dates cannot be assigned to a quarter or month. "
+            "Should I report across the full Deals board instead?"
         )
         pending = {
-            "kind": "data_quality_period_field",
-            "options": [],
+            "kind": "data_quality_full_board",
+            "options": ["full Deals board"],
             "intent": intent.value,
             "period": period.model_dump(mode="json"),
         }
