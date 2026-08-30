@@ -301,6 +301,8 @@ The hosted reference deployment uses [Vercel](https://vercel.com) for both publi
 4. Set backend `CORS_ALLOW_ORIGINS` to the exact Vercel frontend origin and redeploy.
 5. Exercise all five evaluator prompts and confirm that the Sources panel reports live board IDs and plausible row counts.
 
+Current hosted services use Vercel for zero-setup evaluation. The canonical Docker backend runs Python 3.11; Vercel's managed Python fallback currently runs Python 3.12 because that platform no longer offers 3.11.
+
 Current hosted services:
 
 - Frontend: [https://skylark-signal-lac.vercel.app](https://skylark-signal-lac.vercel.app)
