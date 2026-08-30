@@ -29,10 +29,10 @@ The captures preserve the concept's dark green editorial palette, lime status/ac
 
 ## Deployment-owner checks
 
-1. [x] Publish the canonical repository at `https://github.com/9059Rohith/skylark`.
+1. [ ] Make the canonical repository at `https://github.com/9059Rohith/skylark` public; deployment is complete, but unauthenticated access currently returns `404`.
 2. [x] Deploy the public FastAPI fallback and Next.js frontend under Rohith's Vercel account.
 3. [x] Verify browser render, prompt submission, frontend proxy, backend SSE contract, and zero browser console errors.
 4. [x] Import both workbooks into monday and supply the token, two board IDs, and OpenAI key in the backend secret store.
 5. [x] Confirm `/health` reports ready without exposing configuration values.
 6. [x] Exercise the five required prompts plus revenue against the live boards; verify expected source routing, terminal events, and zero SSE errors.
-7. [ ] Restrict `CORS_ALLOW_ORIGINS` to the final frontend origin after credentials are configured.
+7. [x] Restrict `CORS_ALLOW_ORIGINS` to the exact production frontend origin and verify the preflight response.
