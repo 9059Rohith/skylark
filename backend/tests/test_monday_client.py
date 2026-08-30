@@ -556,6 +556,59 @@ def test_non_retryable_graphql_failure_is_classified() -> None:
     assert error.value.retryable is False
 
 
+@pytest.mark.parametrize("code", ["UNAUTHENTICATED", "InvalidToken", "INVALID_TOKEN"])
+def test_graphql_authentication_codes_are_classified_without_message_guessing(code: str) -> None:
+    """Structured invalid-token codes must take precedence over neutral error prose."""
+    fake = FakeHTTPClient(
+        [FakeResponse({"errors": [{"message": "Request rejected", "extensions": {"code": code}}]})]
+    )
+    client = GraphQLMondayClient(token="test-token", http_client=fake)
+
+    with pytest.raises(MondayAPIError) as error:
+        asyncio.run(client.get_board_items("42"))
+
+    assert error.value.classification == "authentication"
+    assert error.value.retryable is False
+
+
+def test_repeated_pagination_cursor_stops_with_partial_caveat() -> None:
+    """A repeated monday cursor must not loop forever or duplicate pages indefinitely."""
+    fake = FakeHTTPClient(
+        [
+            schema_response(),
+            FakeResponse({"data": {"boards": [{"id": "42", "name": "Deals", "items_page": {"cursor": "same", "items": [{"id": "d-1", "name": "One", "column_values": []}]}}]}}),
+            FakeResponse({"data": {"next_items_page": {"cursor": "same", "items": [{"id": "d-2", "name": "Two", "column_values": []}]}}}),
+        ]
+    )
+    client = GraphQLMondayClient(token="test-token", http_client=fake)
+
+    result = asyncio.run(client.get_board_items("42"))
+
+    assert [item.id for item in result.items] == ["d-1", "d-2"]
+    assert result.partial is True
+    assert "repeated" in result.caveats[-1].casefold()
+    assert len(fake.requests) == 3
+
+
+def test_pagination_page_bound_returns_accumulated_partial_rows() -> None:
+    """A defensive page limit must retain fetched evidence and label truncation."""
+    fake = FakeHTTPClient(
+        [
+            schema_response(),
+            FakeResponse({"data": {"boards": [{"id": "42", "name": "Deals", "items_page": {"cursor": "page-2", "items": [{"id": "d-1", "name": "One", "column_values": []}]}}]}}),
+            FakeResponse({"data": {"next_items_page": {"cursor": "page-3", "items": [{"id": "d-2", "name": "Two", "column_values": []}]}}}),
+        ]
+    )
+    client = GraphQLMondayClient(token="test-token", http_client=fake, max_item_pages=2)
+
+    result = asyncio.run(client.get_board_items("42"))
+
+    assert [item.id for item in result.items] == ["d-1", "d-2"]
+    assert result.partial is True
+    assert "page limit" in result.caveats[-1].casefold()
+    assert len(fake.requests) == 3
+
+
 def test_invalid_board_id_is_rejected_before_transport() -> None:
     """Allowing arbitrary board identifiers weakens the typed GraphQL boundary."""
     fake = FakeHTTPClient([])

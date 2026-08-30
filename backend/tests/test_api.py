@@ -61,13 +61,13 @@ def api_settings() -> Settings:
     )
 
 
-def test_health_is_ready_without_exposing_configuration_or_secrets() -> None:
+def test_health_is_degraded_without_exposing_configuration_or_secrets() -> None:
     """Health output must be useful to hosting without leaking credentials."""
     client = TestClient(create_app(agent=FakeStreamingAgent(), settings=api_settings()))
 
     response = client.get("/health")
 
-    assert response.status_code == 200
+    assert response.status_code == 503
     assert response.json() == {
         "status": "degraded",
         "missing": ["MONDAY_API_TOKEN", "OPENAI_API_KEY"],
@@ -100,7 +100,9 @@ def test_health_lists_every_missing_required_integration_setting() -> None:
     )
     client = TestClient(create_app(agent=FakeStreamingAgent(), settings=settings))
 
-    assert client.get("/health").json() == {
+    response = client.get("/health")
+    assert response.status_code == 503
+    assert response.json() == {
         "status": "degraded",
         "missing": [
             "MONDAY_API_TOKEN",
@@ -126,6 +128,7 @@ def test_health_uses_the_selected_anthropic_provider_key() -> None:
     ).get("/health")
 
     assert response.json() == {"status": "ready", "missing": []}
+    assert response.status_code == 200
 
 
 def test_chat_streams_every_typed_sse_event_with_board_counts() -> None:

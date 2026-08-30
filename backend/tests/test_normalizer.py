@@ -7,6 +7,7 @@ from app.cleaning.normalizer import (
     normalize_currency,
     normalize_date,
     normalize_sector,
+    normalize_stage,
 )
 from app.cleaning.quality_report import DataQualityReport
 from app.cleaning.rules import (
@@ -197,6 +198,49 @@ def test_normalize_sector_flags_missing_values(raw_value: object) -> None:
     assert normalized.value == "Unclassified"
     assert normalized.is_valid is False
     assert normalized.reason == "missing_value"
+
+
+@pytest.mark.parametrize(
+    ("raw_value", "expected"),
+    [
+        ("Closed Won", "Won"),
+        ("won-deal", "Won"),
+        ("CLOSED_WON!", "Won"),
+        ("Closed Lost", "Lost"),
+        ("lost.deal", "Lost"),
+        ("A. Lead Generated", "Lead"),
+        ("B. Sales Qualified Leads", "Qualified"),
+        ("C. Demo Done", "Qualified"),
+        ("D. Feasibility", "Qualified"),
+        ("E. Proposal/Commercials Sent", "Proposal"),
+        ("F. Negotiations", "Negotiation"),
+        ("G. Project Won", "Won"),
+        ("H. Work Order Received", "Won"),
+        ("I. POC", "Proposal"),
+        ("J. Invoice sent", "Won"),
+        ("K. Amount Accrued", "Won"),
+        ("L. Project Lost", "Lost"),
+        ("M. Projects On Hold", "On Hold"),
+        ("Project Completed", "Won"),
+    ],
+)
+def test_normalize_stage_canonicalizes_won_and_lost_variants(
+    raw_value: str, expected: str
+) -> None:
+    """Punctuation or source-label variants must not fragment terminal stages."""
+    normalized = normalize_stage(raw_value)
+
+    assert normalized.value == expected
+    assert normalized.is_valid is True
+
+
+def test_normalize_stage_preserves_unknown_label_without_claiming_confidence() -> None:
+    """An unfamiliar stage must remain inspectable instead of being guessed."""
+    normalized = normalize_stage("Partner Review")
+
+    assert normalized.value == "Partner Review"
+    assert normalized.is_valid is False
+    assert normalized.reason == "unknown_stage"
 
 
 def test_quality_report_merge_preserves_counts_notes_and_duplicate_flags() -> None:

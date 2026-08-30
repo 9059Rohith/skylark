@@ -1,7 +1,9 @@
 """Human-reviewed leadership update draft builder; it has no write action."""
 
+from datetime import date
 from decimal import Decimal
 from collections.abc import Mapping, Sequence
+import re
 from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field
@@ -60,12 +62,34 @@ def _decimal(value: Any) -> Decimal:
         return Decimal("0")
 
 
+_RISKY_WORK_ORDER_STATUSES = {
+    "blocked": "Blocked",
+    "delayed": "Delayed",
+    "at risk": "At Risk",
+    "overdue": "Overdue",
+    "pause struck": "Paused / Stuck",
+}
+
+_CONDITIONALLY_RISKY_STATUSES = {
+    "not started": "Not Started",
+    "details pending from client": "Details Pending",
+}
+
+
+def _risky_status(value: object) -> str | None:
+    if not isinstance(value, str):
+        return None
+    key = " ".join(re.sub(r"[^a-z0-9]+", " ", value.casefold()).split())
+    return _RISKY_WORK_ORDER_STATUSES.get(key)
+
+
 def build_leadership_update(
     pipeline: AnalysisResult,
     sectors: AnalysisResult,
     gaps: AnalysisResult,
     *,
     work_orders: Sequence[Mapping[str, Any]] = (),
+    as_of: date | None = None,
 ) -> LeadershipUpdate:
     """Build a deterministic draft from aggregate analyses only."""
     headline = _decimal(pipeline.metrics.get("total_pipeline_value_inr"))
@@ -91,9 +115,29 @@ def build_leadership_update(
         if isinstance(item, dict)
     ][:5]
     for work_order in work_orders:
+        risky_status = _risky_status(work_order.get("status"))
+        status_key = " ".join(
+            re.sub(
+                r"[^a-z0-9]+", " ", str(work_order.get("status") or "").casefold()
+            ).split()
+        )
+        expected_end = normalize_date(work_order.get("expected_end_date"))
+        overdue_status = _CONDITIONALLY_RISKY_STATUSES.get(status_key)
         started = normalize_date(work_order.get("start_date"))
         completed = normalize_date(work_order.get("completion_date"))
-        if completed.is_valid:
+        if risky_status is not None:
+            reason = f"Work order status is {risky_status}"
+        elif (
+            overdue_status is not None
+            and as_of is not None
+            and expected_end.is_valid
+            and expected_end.value is not None
+            and expected_end.value < as_of
+        ):
+            reason = f"Work order is overdue with status {overdue_status}"
+        elif overdue_status is not None:
+            continue
+        elif completed.is_valid:
             if (
                 started.is_valid
                 and started.value is not None

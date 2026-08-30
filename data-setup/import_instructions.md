@@ -5,30 +5,36 @@ Use the original assignment spreadsheets only as local import sources. Do **not*
 ## 1. Import the boards
 
 1. In the target monday workspace, choose **Add > New board > Import data > Excel**.
-2. Import **Deal Funnel Data** into a new private board named `Deals`.
-3. Import **Work Order Tracker** into a new private board named `Work Orders`.
-4. Select the business-name/client column as each item's name when the wizard asks.
+2. Import **Deal Funnel Data** into a new private board named `Deals`. Select `Deal Name` as the monday item name and retain `Client Code` as a separate Text column.
+3. In **Work Order Tracker**, delete/skip the blank first spreadsheet row so row 2 is treated as the header. Import it into a new private board named `Work Orders`, select `Deal name masked` as the item name, and retain `Customer Name Code` as Text.
+4. Do not treat `Serial #` as a deal relation. It is the work-order identifier. Create a separate Connect Boards `Linked Deal` column only if relations are manually verified.
 5. Review the inferred types and adjust them using the mapping below. Keep messy source values as Text when converting them to Date/Numbers would discard evidence.
 
 | Workbook / semantic field | Preferred monday type | Notes |
 |---|---|---|
-| Deal Funnel: client | Name or Text | Required matching/display field |
-| Deal Funnel: stage | Status | Preserve source label; won/lost aliases normalize at runtime |
-| Deal Funnel: amount/value | Numbers when clean, otherwise Text | Include currency code/symbol when values are mixed |
-| Deal Funnel: sector | Dropdown or Text | Keep the source taxonomy |
-| Deal Funnel: close date | Date when clean, otherwise Text | Missing/invalid values are reported |
+| Deal Funnel: `Deal Name` | Item name | Shared cross-board match key |
+| Deal Funnel: `Client Code` | Text | Preserve masked code; not assumed equal to work-order code |
+| Deal Funnel: `Deal Status` | Status | Authoritative Open/On Hold/Dead/Won outcome |
+| Deal Funnel: `Deal Stage` | Status or Text | Funnel progression; do not merge with Deal Status |
+| Deal Funnel: `Masked Deal value` | Numbers when clean, otherwise Text | Runtime parses supported currency forms |
+| Deal Funnel: `Sector/service` | Dropdown or Text | Preserve source taxonomy |
+| Deal Funnel: `Close Date (A)` | Date when clean, otherwise Text | Actual close, preferred when present |
+| Deal Funnel: `Tentative Close Date` | Date when clean, otherwise Text | Active-deal period fallback |
 | Deal Funnel: last reached stage / history | Text | Optional funnel evidence |
-| Work Order: linked deal | Connect Boards or Text deal ID | Relation ID is the preferred match key |
-| Work Order: client | Name or Text | Normalized fallback match key |
-| Work Order: start/completion dates | Date when clean, otherwise Text | Invalid dates remain quality exclusions |
-| Work Order: status | Status | Used for operational-risk summaries |
-| Work Order: sector | Dropdown or Text | Optional breakdown field |
+| Work Order: `Deal name masked` | Item name | Normalized deal-name match before client fallback |
+| Work Order: `Customer Name Code` | Text | Preserve source masked code |
+| Work Order: `Serial #` | Text | Work-order ID, never an inferred deal ID |
+| Work Order: `Execution Status` | Status | Operational-risk status |
+| Work Order: `Probable Start Date` | Date/Text | Planned start |
+| Work Order: `Data Delivery Date` | Date/Text | Actual completion for cycle-time metrics |
+| Work Order: `Probable End Date` | Date/Text | Overdue-risk comparison |
+| Work Order: `Sector` | Dropdown or Text | Optional breakdown field |
 
 The complete expected titles and accepted aliases are in [board_schema.md](board_schema.md).
 
 ## 2. Link and verify
 
-If the workbook contains reliable deal identifiers, configure `linked deal` as a **Connect Boards** column targeting `Deals`. Retain any source deal ID as a Text column for verification. Do not invent links based only on similar names; the application can use a normalized client fallback and will report rows that have neither match key.
+If independently verified relation data is available, add `Linked Deal` as a **Connect Boards** column targeting `Deals`. Do not convert `Serial #` into that relation. Matching order is exact relation ID, normalized deal name, then normalized client code. The supplied client masks differ between workbooks, so deal-name matching is the practical fallback and uncertain rows remain visible in quality accounting.
 
 Open several imported items and compare dates, currency symbols/codes, status labels, blank cells, and identifiers with the source workbook. Confirm row totals in monday before continuing.
 

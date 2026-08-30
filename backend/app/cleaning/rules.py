@@ -28,6 +28,48 @@ SECTOR_ALIASES = {
     "manufacturing": "Manufacturing",
     "retail": "Retail",
     "professional services": "Professional Services",
+    "renewables": "Renewables",
+    "powerline": "Powerline",
+    "mining": "Mining",
+    "railways": "Railways",
+    "construction": "Construction",
+    "dsp": "DSP",
+    "tender": "Tender",
+    "security and surveillance": "Security and Surveillance",
+    "aviation": "Aviation",
+    "others": "Others",
+}
+
+SECTOR_QUERY_GROUPS = {
+    "Energy": frozenset({"Energy", "Renewables", "Powerline"}),
+}
+
+STAGE_ALIASES = {
+    "won": "Won",
+    "closed won": "Won",
+    "won deal": "Won",
+    "deal won": "Won",
+    "lost": "Lost",
+    "closed lost": "Lost",
+    "lost deal": "Lost",
+    "deal lost": "Lost",
+    "dead": "Lost",
+    "open": "Open",
+    "on hold": "On Hold",
+    "lead generated": "Lead",
+    "sales qualified leads": "Qualified",
+    "demo done": "Qualified",
+    "feasibility": "Qualified",
+    "proposal commercials sent": "Proposal",
+    "negotiations": "Negotiation",
+    "project won": "Won",
+    "work order received": "Won",
+    "poc": "Proposal",
+    "invoice sent": "Won",
+    "amount accrued": "Won",
+    "project lost": "Lost",
+    "projects on hold": "On Hold",
+    "project completed": "Won",
 }
 
 

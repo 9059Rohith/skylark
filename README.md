@@ -28,7 +28,7 @@ parse_intent -> plan_data_needs -> fetch_from_monday -> clean_and_normalize
 monday GraphQL API 2026-07
 ```
 
-The backend is Python 3.11, FastAPI, Pydantic v2, and a hand-rolled LangGraph. The monday boundary is an MCP-compatible tool interface; because no hosted monday MCP endpoint was available for this build, the executable adapter calls monday GraphQL directly. Required boards are fetched concurrently, every page is followed, and live column IDs are mapped from normalized titles and documented aliases. OpenAI `gpt-5.4-mini` is the production default; changing `LLM_PROVIDER` swaps to the optional Anthropic adapter. The frontend is Next.js App Router, TypeScript, and Tailwind. Render runs the backend Docker image and Vercel hosts the frontend.
+The backend is Python 3.11, FastAPI, Pydantic v2, and a hand-rolled LangGraph. The monday boundary is an MCP-compatible tool interface; because no hosted monday MCP endpoint was available for this build, the executable adapter calls monday GraphQL directly. Required boards are fetched concurrently, cursors are followed within a defensive page bound, and live column IDs are mapped from normalized titles and documented aliases. OpenAI `gpt-5.4-mini` is the production default; changing `LLM_PROVIDER` swaps to the optional Anthropic adapter. The frontend is Next.js App Router, TypeScript, and Tailwind. Render runs the backend Docker image and Vercel hosts the frontend.
 
 ## Quick start
 
@@ -83,7 +83,7 @@ npm run dev
 | `BACKEND_URL` | frontend | Server-only backend origin, default `http://localhost:8000` |
 | `PORT` | hosting | Container HTTP port; backend defaults to `8000`, frontend `3000` |
 
-`/health` reports `ready` only when both monday board IDs, the token, and the selected provider key are configured; it never returns secret values.
+`/health` is a readiness probe: it returns HTTP 200 only when both monday board IDs, the token, and selected provider key are configured; degraded readiness returns HTTP 503 with the same sanitized missing-setting payload.
 
 ## What to ask
 
@@ -97,13 +97,13 @@ Follow-ups such as “Break that down by sector” reuse the UUIDv4 session cont
 
 ## Data, provenance, and safety
 
-Metrics and currency/date arithmetic are deterministic. Periods apply to the intent's relevant date: deal close date for pipeline, completion date for work orders, and the target won deals for cross-board gaps while retaining all usable matching work-order evidence. A period-scoped quality request asks before broadening to the full Deals board because missing dates cannot be assigned to a period. Every response names queried boards and item counts; partial later pages are labeled, while a failed required board produces an unavailable error rather than false zeroes.
+Metrics and currency/date arithmetic are deterministic. `Deal Status` is distinct from the lettered funnel `Deal Stage`; status is authoritative for Won/Dead. Deal period scope prefers `Close Date (A)` and falls back to `Tentative Close Date`, while work-order completion uses `Data Delivery Date`. Cross-board matching tries an explicit relation, normalized deal name, then client code, retaining all usable work-order evidence. The `Energy` query group includes Energy, Renewables, and Powerline while breakdown labels remain distinct. A period-scoped quality request asks before broadening to the full Deals board because missing dates cannot be assigned to a period. Every response names queried boards and item counts; partial later pages are labeled, while a failed required board produces an unavailable error rather than false zeroes.
 
 Only GraphQL queries are implemented—no monday mutations, send actions, or write tools. Keep credentials in host secret stores or ignored `.env` files, grant the minimum monday board visibility, rotate leaked tokens, restrict CORS, and review [SECURITY.md](SECURITY.md). Raw prompts and board rows are not logged or checkpointed. Process-local checkpoints are bounded but require sticky single-worker routing; substitute a production shared checkpointer before horizontal scaling.
 
 ## API and operational behavior
 
-The monday client sends `API-Version: 2026-07`, requests up to 500 items per page, follows cursors to completion, and retries transient rate/server errors up to three total attempts using `Retry-After` or capped exponential delay. `POST /chat` returns typed `text/event-stream`; requests require a UUIDv4 session ID and a bounded message. The frontend proxy preserves streaming and applies a 120-second timeout.
+The monday client sends `API-Version: 2026-07`, requests up to 500 items per page, follows distinct cursors for at most 100 pages, labels repeated-cursor/page-bound truncation as partial, and retries transient rate/server errors up to three total attempts using `Retry-After` or capped exponential delay. `POST /chat` returns typed `text/event-stream`; requests require a UUIDv4 session ID and a bounded message. The frontend proxy preserves streaming and applies a 120-second timeout.
 
 Troubleshooting:
 
@@ -143,6 +143,6 @@ Run `docker compose config` and `docker compose build` before release. The machi
 
 OpenAI Codex/GPT-5-family coding assistance was used to implement, test, and review the repository; image generation was used for a visual concept reference. No Claude API was used during the build. A human supplied the requirements, approved OpenAI as the default because no Anthropic key was available, and remains responsible for credential scope, deployment, live-data validation, and publication.
 
-Known limitations: no public deployment can be completed without the owner's hosting accounts and secrets; monday imports are one-time manual setup; live schema/type changes may require cache refresh; in-memory sessions are single-process; fuzzy client fallback can be ambiguous; currency conversion needs an explicit rate; no authentication layer is bundled for the prototype; and leadership updates are draft-only.
+Known limitations: no public deployment can be completed without the owner's hosting accounts and secrets; monday imports are one-time manual setup; dirty repeated-header rows remain visible as quality exclusions; live schema/type changes may require cache refresh; in-memory sessions are single-process; normalized deal-name/client fallback can be ambiguous; currency conversion needs an explicit rate; no authentication layer is bundled for the prototype; and leadership updates are draft-only.
 
 See [DECISION_LOG.md](DECISION_LOG.md) for the concise implementation rationale.

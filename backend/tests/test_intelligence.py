@@ -201,6 +201,18 @@ def test_won_deals_without_work_orders_matches_relation_then_normalized_client()
     assert result.quality.exclusions == {"not_won": 1}
 
 
+def test_cross_board_treats_closed_won_as_won() -> None:
+    """A canonical won alias must not be excluded as a non-won deal."""
+    result = won_deals_without_work_orders(
+        [{"id": "d-1", "name": "Acme", "client": "Acme", "stage": "Closed-Won"}],
+        [{"id": "wo-1", "deal_id": "d-1", "client": ""}],
+    )
+
+    assert result.metrics["won_deal_count"] == 1
+    assert result.metrics["matched_work_order_count"] == 1
+    assert "not_won" not in result.quality.exclusions
+
+
 def test_transport_relation_id_list_matches_won_deal_without_stringifying_sequence() -> None:
     """Transport relation arrays must remain usable as exact cross-board deal IDs."""
     relation_ids = normalize_column_value(
@@ -226,7 +238,7 @@ def test_transport_relation_id_list_matches_won_deal_without_stringifying_sequen
 def test_won_deal_gap_reports_missing_match_keys_as_quality_exclusions() -> None:
     """A won deal with neither ID nor client cannot be confidently cross-board matched."""
     result = won_deals_without_work_orders(
-        [{"id": "", "name": "Unkeyed", "client": "", "stage": "Won"}], []
+        [{"id": "", "name": "", "client": "", "stage": "Won"}], []
     )
 
     assert result.metrics["won_deal_count"] == 1

@@ -6,7 +6,7 @@ from typing import Any, Protocol
 
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import StreamingResponse
+from fastapi.responses import JSONResponse, StreamingResponse
 
 from app.agent.graph import AgentDependencies, AgentRunner
 from app.agent.llm import create_llm_service
@@ -82,7 +82,7 @@ def create_app(
     )
 
     @application.get("/health")
-    async def health() -> dict[str, object]:
+    async def health() -> JSONResponse:
         missing = []
         if not active_settings.monday_api_token:
             missing.append("MONDAY_API_TOKEN")
@@ -98,7 +98,10 @@ def create_app(
         if active_settings.llm_provider == "openai" and not active_settings.openai_api_key:
             missing.append("OPENAI_API_KEY")
         missing.extend(getattr(application.state, "runtime_missing", []))
-        return {"status": "degraded" if missing else "ready", "missing": missing}
+        return JSONResponse(
+            {"status": "degraded" if missing else "ready", "missing": missing},
+            status_code=503 if missing else 200,
+        )
 
     @application.post("/chat")
     async def chat(request: ChatRequest) -> StreamingResponse:

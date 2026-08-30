@@ -4,6 +4,7 @@
   "requirements": [
     {"id": "live_read_only_monday", "evidence": ["backend/app/monday/client.py", "SECURITY.md", "backend/tests/test_monday_client.py"]},
     {"id": "manual_board_import", "evidence": ["data-setup/import_instructions.md", "data-setup/board_schema.md"]},
+    {"id": "actual_workbook_contract", "evidence": ["backend/tests/test_release_hardening.py", "data-setup/board_schema.md"], "notes": "Exact titles; Deal Status/Stage separation; deal-name matching; Energy group; no workbook rows committed"},
     {"id": "messy_data_traceability", "evidence": ["backend/app/cleaning", "backend/app/intelligence", "backend/tests/test_normalizer.py", "backend/tests/test_intelligence.py"]},
     {"id": "conversational_bi", "evidence": ["backend/app/agent/graph.py", "frontend/components/ChatWindow.tsx", "backend/tests/test_agent_graph.py"]},
     {"id": "pipeline_health", "prompt": "How healthy is our pipeline?", "backend_test": "backend/tests/test_release_archetypes.py", "frontend_test": "frontend/components/__tests__/ChatWindow.test.tsx"},

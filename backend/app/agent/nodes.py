@@ -14,7 +14,7 @@ from pydantic_core import to_jsonable_python
 
 from app.agent.routing import Intent, parse_intent
 from app.agent.state import AgentContext, AgentState
-from app.cleaning import normalize_date, normalize_sector
+from app.cleaning import normalize_date, sector_matches_requested
 from app.cleaning.quality_report import DataQualityReport
 from app.intelligence import (
     AnalysisResult,
@@ -29,20 +29,26 @@ from app.monday import BoardItemsResult, BoardSchema, MondayAPIError
 
 
 DEAL_TITLE_ALIASES = {
-    "client": {"client", "client name", "customer", "customer name", "account"},
+    "deal_name": {"deal name"},
+    "client": {"client", "client name", "client code", "customer", "customer name", "account"},
+    "deal_status": {"deal status"},
     "stage": {"stage", "deal stage", "pipeline stage", "status"},
-    "amount": {"amount", "deal value", "contract value", "pipeline value", "estimated value"},
-    "sector": {"sector", "industry", "vertical", "industry vertical"},
-    "close_date": {"close date", "expected close", "expected close date", "closed date"},
+    "amount": {"amount", "deal value", "masked deal value", "contract value", "pipeline value", "estimated value"},
+    "sector": {"sector", "sector service", "industry", "vertical", "industry vertical"},
+    "close_date_actual": {"close date", "close date a", "actual close date", "closed date"},
+    "close_date_tentative": {"tentative close date", "expected close", "expected close date"},
     "last_reached_stage": {"last reached stage", "last stage before loss"},
     "stage_history": {"stage history", "stage history values"},
 }
 WORK_ORDER_TITLE_ALIASES = {
     "deal_id": {"deal id", "linked deal", "linked deal id", "deal relation"},
-    "client": {"client", "client name", "customer", "customer name"},
-    "start_date": {"start date", "started date", "kickoff", "kickoff date", "created date"},
-    "completion_date": {"completion date", "completed date", "completed", "end date"},
-    "status": {"status", "work order status"},
+    "deal_name": {"deal name", "deal name masked"},
+    "client": {"client", "client name", "customer", "customer name", "customer name code"},
+    "work_order_id": {"serial", "serial number"},
+    "start_date": {"start date", "started date", "kickoff", "kickoff date", "created date", "probable start date"},
+    "completion_date": {"completion date", "completed date", "completed", "end date", "data delivery date"},
+    "expected_end_date": {"probable end date", "expected end date"},
+    "status": {"status", "work order status", "execution status"},
     "sector": {"sector", "industry", "vertical", "industry vertical"},
 }
 
@@ -71,7 +77,11 @@ def _normalized_title(title: str) -> str:
 
 
 def map_live_columns(
-    schema: BoardSchema, result: BoardItemsResult, *, board_kind: str
+    schema: BoardSchema,
+    result: BoardItemsResult,
+    *,
+    board_kind: str,
+    item_name_semantic: str = "deal_name",
 ) -> list[dict[str, Any]]:
     """Map opaque monday column IDs through normalized live schema titles."""
     aliases = DEAL_TITLE_ALIASES if board_kind == "deals" else WORK_ORDER_TITLE_ALIASES
@@ -89,6 +99,25 @@ def map_live_columns(
         for column_id, semantic in semantic_by_id.items():
             if column_id in item.values:
                 record[semantic] = item.values[column_id]
+        item_name = item.name.strip()
+        current_item_semantic = record.get(item_name_semantic)
+        if item_name and (
+            current_item_semantic is None
+            or (
+                isinstance(current_item_semantic, str)
+                and not current_item_semantic.strip()
+            )
+        ):
+            record[item_name_semantic] = item_name
+            record[f"_{item_name_semantic}_source"] = "item_name_fallback"
+        if board_kind == "deals":
+            actual = record.get("close_date_actual")
+            record["close_date"] = (
+                actual
+                if actual is not None
+                and (not isinstance(actual, str) or actual.strip())
+                else record.get("close_date_tentative")
+            )
         records.append(record)
     return records
 
@@ -424,7 +453,7 @@ class GraphNodes:
             records["deals"] = [
                 record
                 for record in records["deals"]
-                if normalize_sector(record.get("sector")).value == sector
+                if sector_matches_requested(record.get("sector"), sector)
             ]
         return {
             "records": records,
@@ -464,7 +493,11 @@ class GraphNodes:
             gaps = _with_scope_quality(gaps, deal_scope_exclusions)
             result = pipeline
             leadership = build_leadership_update(
-                pipeline, sectors, gaps, work_orders=work_orders
+                pipeline,
+                sectors,
+                gaps,
+                work_orders=work_orders,
+                as_of=self.dependencies.clock().date(),
             )
         if intent != Intent.LEADERSHIP_UPDATE:
             scope_kind = (

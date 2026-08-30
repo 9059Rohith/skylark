@@ -6,7 +6,8 @@
 - [x] Backend Ruff and Python compile
 - [x] Frontend Vitest, ESLint, TypeScript, and production build
 - [x] High-severity npm audit
-- [x] Five mocked archetypes through FastAPI SSE and the chat UI
+- [x] Five mocked archetypes through FastAPI SSE; frontend reducers/components exercised with synthetic SSE
+- [x] Next.js proxy preserves a progressively delivered upstream SSE body
 - [x] Compose, JSON, and YAML validation
 - [ ] Container builds — blocked locally because Docker Desktop's Linux engine is not running
 - [x] Credential/placeholder scan and `git diff --check`

@@ -81,7 +81,8 @@ def normalize_column_value(raw: dict[str, Any], schema: ColumnSchema | None = No
         return text or _clean_text(decoded)
 
     if column_type == "dropdown":
-        return _split_labels(text)
+        labels = _split_labels(text)
+        return labels[0] if len(labels) == 1 else labels
 
     if column_type in {"board_relation", "dependency"}:
         return _relation_ids(decoded)

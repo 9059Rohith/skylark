@@ -4,7 +4,12 @@ from collections import Counter, defaultdict
 from collections.abc import Mapping, Sequence
 from decimal import Decimal, ROUND_HALF_UP
 
-from app.cleaning.normalizer import normalize_currency, normalize_date, normalize_sector
+from app.cleaning.normalizer import (
+    normalize_currency,
+    normalize_date,
+    normalize_sector,
+    normalize_stage,
+)
 from app.cleaning.quality_report import DataQualityReport
 from app.cleaning.rules import DuplicateCandidate, find_duplicate_candidates
 from app.intelligence.records import Record, record_value, text_value
@@ -68,6 +73,8 @@ def pipeline_health(
     average = total / valid_amounts if valid_amounts else None
     duplicates = _duplicate_pairs(deals, usd_to_inr_rate)
     notes = ["Amounts are normalized to INR base units."]
+    if any(record_value(deal, "_client_source") == "item_name_fallback" for deal in deals):
+        notes.append("Client used the monday item name where the Client column was blank or absent.")
     if duplicates:
         notes.append("Duplicate-ish deals are flagged for review and are not merged.")
     return AnalysisResult(
@@ -96,7 +103,10 @@ def stage_conversion(
     observed_last_stage_counts = [0 for _ in ordered_stages]
     exclusions: Counter[str] = Counter()
     for deal in deals:
-        stage = text_value(record_value(deal, "stage", "status", "deal_stage"))
+        normalized_stage = normalize_stage(
+            record_value(deal, "stage", "status", "deal_stage")
+        )
+        stage = normalized_stage.value
         if stage is None:
             exclusions["missing_stage"] += 1
             continue
@@ -125,8 +135,9 @@ def stage_conversion(
                         )
                     else:
                         entry = text_value(history_entry)
-                    if entry is not None and entry.casefold() in lookup:
-                        recognized_history.append(entry)
+                    normalized_entry = normalize_stage(entry).value
+                    if normalized_entry is not None and normalized_entry.casefold() in lookup:
+                        recognized_history.append(normalized_entry)
                 if recognized_history:
                     last_reached = max(
                         recognized_history, key=lambda value: lookup[value.casefold()]

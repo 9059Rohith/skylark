@@ -24,6 +24,7 @@ MONDAY_API_URL = "https://api.monday.com/v2"
 MONDAY_API_VERSION = "2026-07"
 ITEM_PAGE_LIMIT = 500
 SCHEMA_TTL_SECONDS = 15 * 60
+MAX_ITEM_PAGES = 100
 _BOARD_ID = re.compile(r"^[0-9]+$")
 
 _SCHEMA_QUERY = """query BoardSchema($boardIds: [ID!]!) {
@@ -94,6 +95,7 @@ class GraphQLMondayClient:
         max_attempts: int = 3,
         max_retry_delay: float = 30.0,
         schema_ttl: float = SCHEMA_TTL_SECONDS,
+        max_item_pages: int = MAX_ITEM_PAGES,
         sleep: Callable[[float], Awaitable[None]] = asyncio.sleep,
         monotonic: Callable[[], float] = time.monotonic,
     ) -> None:
@@ -101,6 +103,8 @@ class GraphQLMondayClient:
             raise ValueError("token must not be empty")
         if max_attempts < 1:
             raise ValueError("max_attempts must be at least 1")
+        if max_item_pages < 1:
+            raise ValueError("max_item_pages must be at least 1")
         self._headers = {
             "Authorization": token,
             "Content-Type": "application/json",
@@ -111,6 +115,7 @@ class GraphQLMondayClient:
         self._max_attempts = max_attempts
         self._max_retry_delay = max(0.0, max_retry_delay)
         self._schema_ttl = max(0.0, schema_ttl)
+        self._max_item_pages = max_item_pages
         self._sleep = sleep
         self._monotonic = monotonic
         self._schema_cache: dict[str, tuple[float, BoardSchema]] = {}
@@ -177,7 +182,14 @@ class GraphQLMondayClient:
                 if isinstance(error, Mapping)
                 and isinstance(error.get("extensions", {}), Mapping)
             ).casefold()
-        if "unauthorized" in combined or "unauthorized" in codes or "authentication" in combined:
+        normalized_codes = re.sub(r"[^a-z0-9]+", "", codes)
+        if (
+            "unauthorized" in combined
+            or "unauthorized" in codes
+            or "authentication" in combined
+            or "unauthenticated" in normalized_codes
+            or "invalidtoken" in normalized_codes
+        ):
             return "authentication"
         if "permission" in combined or "forbidden" in combined:
             return "permission"
@@ -379,11 +391,25 @@ class GraphQLMondayClient:
         caveats = [*schema.caveats, *self._safe_caveats(self._messages(payload))]
         raw_items = list(page.get("items") or [])
         cursor = page.get("cursor")
+        seen_cursors: set[str] = set()
+        page_count = 1
         while cursor:
+            cursor_text = str(cursor)
+            if cursor_text in seen_cursors:
+                caveats.append(
+                    "Pagination stopped because monday.com repeated a cursor; remaining items were not fetched."
+                )
+                break
+            if page_count >= self._max_item_pages:
+                caveats.append(
+                    "Pagination stopped at the defensive page limit; remaining items were not fetched."
+                )
+                break
+            seen_cursors.add(cursor_text)
             try:
                 next_payload = await self._execute(
                     _NEXT_ITEMS_QUERY,
-                    {"cursor": str(cursor)},
+                    {"cursor": cursor_text},
                 )
             except MondayAPIError as error:
                 caveats.append(
@@ -402,6 +428,7 @@ class GraphQLMondayClient:
                 break
             raw_items.extend(next_page.get("items") or [])
             cursor = next_page.get("cursor")
+            page_count += 1
 
         return BoardItemsResult(
             board_id=board_id,

@@ -6,7 +6,12 @@ import re
 
 from rapidfuzz import fuzz, process
 
-from app.cleaning.rules import SECTOR_ALIASES, SECTOR_FUZZY_THRESHOLD
+from app.cleaning.rules import (
+    SECTOR_ALIASES,
+    SECTOR_FUZZY_THRESHOLD,
+    SECTOR_QUERY_GROUPS,
+    STAGE_ALIASES,
+)
 from app.cleaning.schemas import NormalizedValue
 
 
@@ -129,6 +134,15 @@ def normalize_sector(value: object) -> NormalizedValue[str]:
     """Resolve sector aliases first, then accept only conservative fuzzy matches."""
     if _is_missing(value):
         return _invalid(value, "missing_value", fallback="Unclassified")
+    if isinstance(value, (list, tuple, set)):
+        labels = [label for label in value if not _is_missing(label)]
+        if len(labels) == 1:
+            return normalize_sector(labels[0])
+        return _invalid(
+            value,
+            "ambiguous_multi_select_sector",
+            fallback="Unclassified",
+        )
     if not isinstance(value, str):
         return _invalid(value, "low_confidence_sector", fallback="Unclassified")
 
@@ -153,3 +167,41 @@ def normalize_sector(value: object) -> NormalizedValue[str]:
             )
 
     return _invalid(value, "low_confidence_sector", fallback="Unclassified")
+
+
+def normalize_stage(value: object) -> NormalizedValue[str]:
+    """Canonicalize terminal deal stages while retaining unknown source labels."""
+    if _is_missing(value):
+        return _invalid(value, "missing_value")
+    if not isinstance(value, str):
+        return _invalid(value, "unknown_stage")
+    cleaned = value.strip()
+    key = _sector_key(cleaned)
+    funnel_key = re.sub(r"^[a-z]\s+", "", key)
+    canonical = STAGE_ALIASES.get(key) or STAGE_ALIASES.get(funnel_key)
+    if canonical is None:
+        if "qualified" in funnel_key:
+            canonical = "Qualified"
+        elif "proposal" in funnel_key or "commercial" in funnel_key:
+            canonical = "Proposal"
+        elif "negotiat" in funnel_key:
+            canonical = "Negotiation"
+        elif "lead" in funnel_key:
+            canonical = "Lead"
+    if canonical is not None:
+        return NormalizedValue(
+            value=canonical,
+            original_value=value,
+            is_valid=True,
+            confidence=100.0,
+        )
+    return _invalid(value, "unknown_stage", fallback=cleaned)
+
+
+def sector_matches_requested(value: object, requested: str) -> bool:
+    """Match a requested reporting group without collapsing breakdown labels."""
+    actual = normalize_sector(value).value
+    requested_label = normalize_sector(requested).value
+    if actual is None or requested_label is None:
+        return False
+    return actual in SECTOR_QUERY_GROUPS.get(requested_label, frozenset({requested_label}))

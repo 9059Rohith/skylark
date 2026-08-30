@@ -8,4 +8,5 @@ Element.prototype.scrollIntoView = vi.fn();
 
 afterEach(() => {
   vi.restoreAllMocks();
+  vi.unstubAllEnvs();
 });
