@@ -23,6 +23,7 @@ from app.intelligence import (
     pipeline_by_sector,
     pipeline_health,
     won_deals_without_work_orders,
+    won_revenue,
 )
 from app.leadership import build_leadership_update
 from app.monday import BoardItemsResult, BoardSchema, MondayAPIError
@@ -148,9 +149,42 @@ def _quality_caveats(result: AnalysisResult) -> list[str]:
     caveats: list[str] = []
     excluded = quality.total_rows - quality.included_rows
     if excluded:
+        labels = {
+            "pipeline_status:closed_won": ("closed-won deal", "closed-won deals"),
+            "pipeline_status:closed_lost": ("closed-lost deal", "closed-lost deals"),
+            "pipeline_status:unknown": ("deal with an unknown stage", "deals with an unknown stage"),
+            "not_won": ("non-won deal", "non-won deals"),
+            "missing_match_key": (
+                "won deal without a usable match key",
+                "won deals without a usable match key",
+            ),
+            "work_order:missing_match_key": (
+                "work order without a usable match key",
+                "work orders without a usable match key",
+            ),
+            "missing_value": (
+                "row with a missing required value",
+                "rows with a missing required value",
+            ),
+            "invalid_date": ("row with an invalid date", "rows with an invalid date"),
+            "invalid_currency": (
+                "row with an invalid amount",
+                "rows with an invalid amount",
+            ),
+        }
+        reason_parts = []
+        for reason, count in sorted(quality.exclusions.items()):
+            singular, plural = labels.get(
+                reason,
+                (
+                    f"{reason.replace(':', ' ').replace('_', ' ')} issue",
+                    f"{reason.replace(':', ' ').replace('_', ' ')} issues",
+                ),
+            )
+            reason_parts.append(f"{count} {singular if count == 1 else plural}")
         caveats.append(
-            f"{excluded} of {quality.total_rows} rows were excluded from this metric; "
-            f"reasons: {quality.exclusions}."
+            f"{excluded} of {quality.total_rows} rows were excluded from this metric. "
+            f"Recorded quality reasons: {', '.join(reason_parts)}."
         )
     if quality.duplicate_records:
         caveats.append(
@@ -230,7 +264,25 @@ def _direct_answer(state: AgentState) -> str:
                 f"across {metrics.get('deal_count', 0)} deal(s)."
             )
     elif intent == Intent.WON_WITHOUT_WORK_ORDERS:
+        missing = metrics.get("missing_work_orders", [])
+        names = [
+            str(row.get("deal_name") or row.get("client") or row.get("deal_id"))
+            for row in missing[:5]
+            if isinstance(row, Mapping)
+            and (row.get("deal_name") or row.get("client") or row.get("deal_id"))
+        ]
         direct = f"{metrics.get('missing_work_order_count', 0)} won deal(s) have no matching work order."
+        if names:
+            more = len(missing) - len(names)
+            direct += f" Review examples: {', '.join(names)}"
+            if more > 0:
+                direct += f", plus {more} more"
+            direct += "."
+    elif intent == Intent.REVENUE:
+        direct = (
+            f"Won deal value is INR {metrics.get('won_deal_value_inr', '0')} "
+            f"across {metrics.get('won_deal_count', 0)} won deal(s)."
+        )
     elif intent == Intent.WORK_ORDER_COMPLETION:
         average_days = metrics.get("average_completion_days")
         direct = (
@@ -259,6 +311,15 @@ def _deterministic_context() -> str:
         "The result uses normalized live board fields. "
         "Source provenance and quality accounting remain attached to this answer."
     )
+
+
+def _llm_safe_metrics(metrics: Mapping[str, Any]) -> dict[str, Any]:
+    """Keep model context aggregate-only; row-level deal identities stay local."""
+    return {
+        key: value
+        for key, value in metrics.items()
+        if key not in {"missing_work_orders"}
+    }
 
 
 class GraphNodes:
@@ -338,6 +399,7 @@ class GraphNodes:
         intent = Intent(state["intent"])
         boards = {
             Intent.PIPELINE_HEALTH: ["deals"],
+            Intent.REVENUE: ["deals"],
             Intent.WON_WITHOUT_WORK_ORDERS: ["deals", "work_orders"],
             Intent.WORK_ORDER_COMPLETION: ["work_orders"],
             Intent.DATA_QUALITY: ["deals"],
@@ -447,6 +509,7 @@ class GraphNodes:
             and intent
             in {
                 Intent.PIPELINE_HEALTH,
+                Intent.REVENUE,
                 Intent.WON_WITHOUT_WORK_ORDERS,
                 Intent.LEADERSHIP_UPDATE,
             }
@@ -490,6 +553,8 @@ class GraphNodes:
             result = pipeline_by_sector(deals, usd_to_inr_rate=rate)
         elif intent == Intent.PIPELINE_HEALTH:
             result = pipeline_health(deals, usd_to_inr_rate=rate)
+        elif intent == Intent.REVENUE:
+            result = won_revenue(deals, usd_to_inr_rate=rate)
         elif intent == Intent.WON_WITHOUT_WORK_ORDERS:
             result = won_deals_without_work_orders(deals, work_orders)
         elif intent == Intent.WORK_ORDER_COMPLETION:
@@ -536,7 +601,9 @@ class GraphNodes:
             "intent": state["intent"],
             "period": state.get("period"),
             "sector": state.get("sector"),
-            "metrics": state.get("analysis", {}).get("metrics", {}),
+            "metrics": _llm_safe_metrics(
+                state.get("analysis", {}).get("metrics", {})
+            ),
             "sources": state.get("sources", []),
             "caveats": state.get("caveats", []),
         }

@@ -229,7 +229,8 @@ async def test_graph_runs_required_nodes_in_order_and_maps_live_column_titles() 
         "synthesize_answer",
         "format_response",
     ]
-    assert result["analysis"]["metrics"]["total_pipeline_value_inr"] == "21000000"
+    assert result["analysis"]["metrics"]["total_pipeline_value_inr"] == "20000000"
+    assert result["analysis"]["metrics"]["deal_count"] == 1
     assert result["sources"] == [
         {"board_id": "101", "board_name": "Deals", "item_count": 2}
     ]
@@ -263,7 +264,7 @@ async def test_checkpointer_preserves_intent_for_sector_follow_up() -> None:
 
     assert follow_up["intent"] == "pipeline_health"
     assert follow_up["breakdown_by_sector"] is True
-    assert set(follow_up["analysis"]["metrics"]["sectors"]) == {"Energy", "Technology"}
+    assert set(follow_up["analysis"]["metrics"]["sectors"]) == {"Energy"}
 
 
 @pytest.mark.asyncio
@@ -389,7 +390,7 @@ async def test_pipeline_month_scope_filters_deals_by_close_date() -> None:
         "How healthy is the pipeline this month?", sid(36)
     )
 
-    assert result["analysis"]["metrics"]["total_pipeline_value_inr"] == "1000000"
+    assert result["analysis"]["metrics"]["total_pipeline_value_inr"] == "0"
     assert result["analysis"]["quality"]["exclusions"][
         "period_scope:outside_period"
     ] == 1
@@ -420,11 +421,9 @@ async def test_deterministic_routing_stays_authoritative_when_claude_is_configur
 
     assert claude.intent_calls == 0
     assert claude.synthesis_calls == 1
-    assert result["answer"].startswith("Total pipeline is INR 21000000")
+    assert result["answer"].startswith("Total pipeline is INR 20000000")
     assert "Pipeline composition is concentrated." in result["answer"]
-    assert result["answer"].endswith(
-        "Material caveat: no row-level caveat affected the aggregate."
-    )
+    assert "1 closed-won deal" in result["answer"]
     assert set(claude.synthesis_payload or {}) == {
         "intent",
         "period",
@@ -448,10 +447,8 @@ async def test_runner_streams_real_synthesis_deltas_from_langgraph_custom_mode()
     streamed_answer = "".join(
         event.token for event in events if event.event == "token"
     )
-    assert streamed_answer.startswith("Total pipeline is INR 21000000")
-    assert streamed_answer.endswith(
-        "Material caveat: no row-level caveat affected the aggregate."
-    )
+    assert streamed_answer.startswith("Total pipeline is INR 20000000")
+    assert "1 closed-won deal" in streamed_answer
     source_event = next(event for event in events if event.event == "sources")
     assert source_event.sources[0].item_count == 2
     assert events[-1].event == "done"
@@ -496,7 +493,7 @@ async def test_runner_emits_prefix_and_safe_claude_deltas_before_stream_completi
         await task
 
     tokens = [event.token for event in events if event.event == "token"]
-    assert tokens[0].startswith("Total pipeline is INR 21000000")
+    assert tokens[0].startswith("Total pipeline is INR 20000000")
     assert "Pipeline composition is concentrated. " in tokens
     assert "Execution attention remains important." in tokens
     assembled = "".join(tokens)
@@ -550,10 +547,8 @@ async def test_unvalidated_claude_numbers_are_not_emitted() -> None:
 
     assert "999" not in streamed
     assert "999" not in result["answer"]
-    assert result["answer"].startswith("Total pipeline is INR 21000000")
-    assert result["answer"].endswith(
-        "Material caveat: no row-level caveat affected the aggregate."
-    )
+    assert result["answer"].startswith("Total pipeline is INR 20000000")
+    assert "1 closed-won deal" in result["answer"]
 
 
 @pytest.mark.asyncio
@@ -599,7 +594,7 @@ async def test_leadership_quality_footnote_includes_period_scope_exclusions() ->
         "Draft the leadership update for this quarter", sid(16)
     )
 
-    assert "1 of 3 pipeline rows were excluded" in result["leadership_update"][
+    assert "2 of 3 pipeline rows were excluded" in result["leadership_update"][
         "quality_footnote"
     ]
     assert result["leadership_update"]["quality"]["sector"]["total_rows"] == 3
@@ -617,9 +612,45 @@ async def test_caveats_event_always_carries_answer_quality_even_without_prose_ca
     ]
 
     caveats = next(event for event in events if event.event == "caveats")
-    assert caveats.caveats == []
+    assert len(caveats.caveats) == 1
+    assert "1 closed-won deal" in caveats.caveats[0]
     assert caveats.quality.total_rows == 2
-    assert caveats.quality.included_rows == 2
+    assert caveats.quality.included_rows == 1
+
+
+@pytest.mark.asyncio
+async def test_quality_caveats_are_executive_readable_not_python_dicts() -> None:
+    """Raw exclusion dictionaries are implementation detail, not founder-facing prose."""
+    result = await AgentRunner(dependencies(FakeMonday())).run_agent(
+        "How healthy is the pipeline?", sid(54)
+    )
+
+    assert "{" not in result["answer"]
+    assert "pipeline_status:" not in result["answer"]
+    assert "closed-won deal" in result["answer"]
+
+
+@pytest.mark.asyncio
+async def test_cross_board_answer_names_top_gaps_without_sending_rows_to_llm() -> None:
+    """The user needs actionable deal names, while the model receives aggregates only."""
+
+    class NoWorkOrdersMonday(FakeMonday):
+        async def get_board_items(self, board_id: str) -> BoardItemsResult:
+            result = await super().get_board_items(board_id)
+            return (
+                result.model_copy(update={"items": ()})
+                if board_id == "202"
+                else result
+            )
+
+    llm = FakeClaude()
+    result = await AgentRunner(dependencies(NoWorkOrdersMonday(), llm)).run_agent(
+        "Which won deals have no work orders?", sid(55)
+    )
+
+    assert "Acme expansion" in result["answer"]
+    assert result["analysis"]["metrics"]["missing_work_orders"]
+    assert "missing_work_orders" not in (llm.synthesis_payload or {})["metrics"]
 
 
 @pytest.mark.asyncio

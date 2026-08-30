@@ -9,25 +9,130 @@ from app.intelligence.pipeline_metrics import (
     pipeline_by_sector,
     stage_conversion,
 )
+from app.intelligence import pipeline_metrics
 from app.monday.schemas import ColumnSchema
 from app.monday.tools import normalize_column_value
 from tests.fixtures.business_records import DEALS, WORK_ORDERS
 
 
-def test_pipeline_health_totals_valid_amounts_and_flags_duplicates_without_merging() -> None:
-    """Invalid amounts or duplicate-ish rows must not be silently hidden in pipeline totals."""
+def test_pipeline_health_totals_valid_active_amounts_without_silently_hiding_rows() -> None:
+    """Terminal stages and invalid active amounts must stay visible in quality accounting."""
     result = pipeline_health(DEALS)
 
     assert result.metrics == {
-        "deal_count": 4,
-        "deals_with_valid_amount": 3,
-        "total_pipeline_value_inr": Decimal("22020000"),
-        "average_deal_value_inr": Decimal("7340000"),
+        "source_deal_count": 4,
+        "deal_count": 2,
+        "deals_with_valid_amount": 1,
+        "total_pipeline_value_inr": Decimal("1020000"),
+        "average_deal_value_inr": Decimal("1020000"),
     }
     assert result.quality.total_rows == 4
-    assert result.quality.included_rows == 3
-    assert result.quality.exclusions == {"invalid_currency": 1}
+    assert result.quality.included_rows == 1
+    assert result.quality.exclusions == {
+        "pipeline_status:closed_won": 2,
+        "invalid_currency": 1,
+    }
+    assert result.quality.duplicate_records == []
+
+
+def test_pipeline_health_flags_duplicate_active_deals_without_merging() -> None:
+    """Duplicate-ish active rows remain in the value and are flagged for human review."""
+    result = pipeline_health(
+        [
+            {
+                "id": "d-1",
+                "client": "Acme, Inc.",
+                "stage": "Proposal",
+                "amount": "1000000",
+                "close_date": "2026-08-10",
+            },
+            {
+                "id": "d-2",
+                "client": " acme inc ",
+                "stage": "Negotiation",
+                "amount": "1020000",
+                "close_date": "2026-08-17",
+            },
+        ]
+    )
+
+    assert result.metrics["total_pipeline_value_inr"] == Decimal("2020000")
     assert result.quality.duplicate_records == [("d-1", "d-2")]
+
+
+def test_pipeline_health_excludes_terminal_and_unknown_deals_from_active_pipeline() -> None:
+    """Won, lost, and unclassified rows must never inflate an active-pipeline headline."""
+    deals = [
+        {"id": "open", "deal_status": "Open", "stage": "Proposal", "amount": "100"},
+        {"id": "hold", "deal_status": "On Hold", "stage": "Projects on hold", "amount": "200"},
+        {"id": "won", "deal_status": "Open", "stage": "Work Order Received", "amount": "300"},
+        {"id": "lost", "deal_status": "Dead", "stage": "Proposal", "amount": "400"},
+        {"id": "unknown", "deal_status": "", "stage": "Unmapped stage", "amount": "500"},
+    ]
+
+    result = pipeline_health(deals)
+
+    assert result.metrics == {
+        "source_deal_count": 5,
+        "deal_count": 2,
+        "deals_with_valid_amount": 2,
+        "total_pipeline_value_inr": Decimal("300"),
+        "average_deal_value_inr": Decimal("150"),
+    }
+    assert result.quality.total_rows == 5
+    assert result.quality.included_rows == 2
+    assert result.quality.exclusions == {
+        "pipeline_status:closed_won": 1,
+        "pipeline_status:closed_lost": 1,
+        "pipeline_status:unknown": 1,
+    }
+
+
+def test_pipeline_by_sector_uses_only_active_opportunities() -> None:
+    """A won opportunity in the same sector must not inflate the sector pipeline."""
+    result = pipeline_by_sector(
+        [
+            {"id": "active", "deal_status": "Open", "stage": "Proposal", "sector": "Energy", "amount": "100"},
+            {"id": "won", "deal_status": "Won", "stage": "Work Order Received", "sector": "Energy", "amount": "900"},
+        ]
+    )
+
+    assert result.metrics["sectors"] == {
+        "Energy": {"deal_count": 1, "total_value_inr": Decimal("100")}
+    }
+    assert result.quality.total_rows == 2
+    assert result.quality.included_rows == 1
+    assert result.quality.exclusions == {"pipeline_status:closed_won": 1}
+
+
+def test_won_revenue_proxy_uses_only_won_deals_and_valid_amounts() -> None:
+    """Active, lost, and unknown-stage deals must not appear as booked-value revenue."""
+    metric = getattr(pipeline_metrics, "won_revenue", None)
+    assert metric is not None, "won revenue metric is required for revenue questions"
+
+    result = metric(
+        [
+            {"id": "won", "deal_status": "Won", "stage": "Work Order Received", "amount": "100"},
+            {"id": "won-bad", "stage": "Project Won", "amount": "unknown"},
+            {"id": "open", "deal_status": "Open", "stage": "Proposal", "amount": "200"},
+            {"id": "lost", "deal_status": "Dead", "amount": "300"},
+            {"id": "unknown", "stage": "Mystery", "amount": "400"},
+        ]
+    )
+
+    assert result.metrics == {
+        "source_deal_count": 5,
+        "won_deal_count": 2,
+        "won_deals_with_valid_amount": 1,
+        "won_deal_value_inr": Decimal("100"),
+        "average_won_deal_value_inr": Decimal("100"),
+    }
+    assert result.quality.included_rows == 1
+    assert result.quality.exclusions == {
+        "invalid_currency": 1,
+        "revenue_status:not_won": 2,
+        "revenue_status:unknown": 1,
+    }
 
 
 def test_stage_conversion_returns_a_caveated_snapshot_progression_proxy() -> None:
@@ -116,13 +221,13 @@ def test_pipeline_by_sector_normalizes_aliases_and_keeps_unclassified_visible() 
     result = pipeline_by_sector(DEALS)
 
     assert result.metrics["sectors"] == {
-        "Energy": {"deal_count": 1, "total_value_inr": Decimal("20000000")},
-        "Technology": {"deal_count": 2, "total_value_inr": Decimal("2020000")},
+        "Technology": {"deal_count": 1, "total_value_inr": Decimal("1020000")},
         "Unclassified": {"deal_count": 1, "total_value_inr": Decimal("0")},
     }
     assert result.quality.total_rows == 4
-    assert result.quality.included_rows == 3
+    assert result.quality.included_rows == 1
     assert result.quality.exclusions == {
+        "pipeline_status:closed_won": 2,
         "amount:invalid_currency": 1,
         "sector:low_confidence_sector": 1,
     }
@@ -135,7 +240,9 @@ def test_pipeline_by_sector_normalizes_aliases_and_keeps_unclassified_visible() 
 
 def test_pipeline_by_sector_uses_field_scoped_missing_value_issues() -> None:
     """Shared reason names must not imply sector and amount issues dropped two rows."""
-    result = pipeline_by_sector([{"id": "d-1", "sector": "", "amount": ""}])
+    result = pipeline_by_sector(
+        [{"id": "d-1", "stage": "Proposal", "sector": "", "amount": ""}]
+    )
 
     assert result.quality.total_rows == 1
     assert result.quality.included_rows == 0
@@ -210,6 +317,26 @@ def test_cross_board_treats_closed_won_as_won() -> None:
 
     assert result.metrics["won_deal_count"] == 1
     assert result.metrics["matched_work_order_count"] == 1
+    assert "not_won" not in result.quality.exclusions
+
+
+def test_cross_board_terminal_stage_overrides_stale_open_deal_status() -> None:
+    """A detailed Work Order Received stage must beat a stale broad Open status."""
+    result = won_deals_without_work_orders(
+        [
+            {
+                "id": "d-1",
+                "name": "Acme",
+                "client": "Acme",
+                "deal_status": "Open",
+                "stage": "H. Work Order Received",
+            }
+        ],
+        [],
+    )
+
+    assert result.metrics["won_deal_count"] == 1
+    assert result.metrics["missing_work_order_count"] == 1
     assert "not_won" not in result.quality.exclusions
 
 

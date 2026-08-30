@@ -80,7 +80,7 @@ async def test_openai_service_uses_responses_api_for_json_and_progressive_deltas
     assert client.responses.create_kwargs["model"] == "gpt-5.4-mini"
     assert client.responses.create_kwargs["max_output_tokens"] == 256
     assert client.responses.create_kwargs["store"] is False
-    assert "intent-v1" in client.responses.create_kwargs["instructions"]
+    assert "intent-v2" in client.responses.create_kwargs["instructions"]
     assert client.responses.stream_kwargs["max_output_tokens"] == 333
     assert "synthesis-v1" in client.responses.stream_kwargs["instructions"]
     assert deltas == ["First context. ", "Second context."]

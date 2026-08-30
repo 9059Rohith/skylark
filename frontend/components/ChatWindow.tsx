@@ -2,15 +2,12 @@
 
 import { FormEvent, KeyboardEvent as ReactKeyboardEvent, useCallback, useEffect, useRef, useState } from "react";
 import {
-  Bell,
-  ChevronDown,
   Database,
   Home,
   MessageSquare,
   PanelRightOpen,
   Plus,
   Send,
-  Settings,
   SlidersHorizontal,
 } from "lucide-react";
 import { MessageBubble } from "@/components/MessageBubble";
@@ -174,9 +171,7 @@ export function ChatWindow() {
         </button>
         <nav>
           <a href="#conversation" aria-current="page"><Home aria-hidden="true" size={18} /> Home</a>
-          <span className="nav-label"><Bell aria-hidden="true" size={18} /> Alerts <span className="nav-dot" /></span>
           <a href="#evidence"><Database aria-hidden="true" size={18} /> Data</a>
-          <span className="nav-label"><Settings aria-hidden="true" size={18} /> Settings</span>
         </nav>
         <div className="recent">
           <h2>Founder prompts</h2>
@@ -187,9 +182,8 @@ export function ChatWindow() {
           ))}
         </div>
         <div className="profile">
-          <span className="avatar">AR</span>
-          <div><strong>Arjun Rao</strong><span>Founder</span></div>
-          <ChevronDown aria-hidden="true" size={17} />
+          <span className="avatar">R</span>
+          <div><strong>Rohith</strong><span>Project author</span></div>
         </div>
       </aside>
 

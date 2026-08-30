@@ -12,6 +12,7 @@ from app.cleaning.normalizer import (
 )
 from app.cleaning.quality_report import DataQualityReport
 from app.cleaning.rules import DuplicateCandidate, find_duplicate_candidates
+from app.intelligence.deal_lifecycle import classify_deal_lifecycle
 from app.intelligence.records import Record, record_value, text_value
 from app.intelligence.schemas import AnalysisResult
 
@@ -59,11 +60,17 @@ def _duplicate_pairs(
 def pipeline_health(
     deals: Sequence[Record], *, usd_to_inr_rate: Decimal | None = None
 ) -> AnalysisResult:
-    """Calculate headline pipeline value without removing duplicate-ish source rows."""
+    """Calculate active pipeline without removing duplicate-ish active source rows."""
     total = Decimal("0")
     valid_amounts = 0
+    active_deals: list[Record] = []
     exclusions: Counter[str] = Counter()
     for deal in deals:
+        status = classify_deal_lifecycle(deal)
+        if status != "active":
+            exclusions[f"pipeline_status:{status}"] += 1
+            continue
+        active_deals.append(deal)
         amount = _amount(deal, usd_to_inr_rate)
         if amount.is_valid and amount.value is not None:
             total += amount.value
@@ -71,15 +78,20 @@ def pipeline_health(
         else:
             exclusions[amount.reason or "invalid_currency"] += 1
     average = total / valid_amounts if valid_amounts else None
-    duplicates = _duplicate_pairs(deals, usd_to_inr_rate)
-    notes = ["Amounts are normalized to INR base units."]
-    if any(record_value(deal, "_client_source") == "item_name_fallback" for deal in deals):
+    duplicates = _duplicate_pairs(active_deals, usd_to_inr_rate)
+    notes = [
+        "Active pipeline includes Open, On Hold, Lead, Qualified, Proposal, and Negotiation stages only.",
+        "Won, Lost, Dead, and unknown-stage rows are excluded from the headline and reported explicitly.",
+        "Amounts are normalized to INR base units.",
+    ]
+    if any(record_value(deal, "_client_source") == "item_name_fallback" for deal in active_deals):
         notes.append("Client used the monday item name where the Client column was blank or absent.")
     if duplicates:
         notes.append("Duplicate-ish deals are flagged for review and are not merged.")
     return AnalysisResult(
         metrics={
-            "deal_count": len(deals),
+            "source_deal_count": len(deals),
+            "deal_count": len(active_deals),
             "deals_with_valid_amount": valid_amounts,
             "total_pipeline_value_inr": total,
             "average_deal_value_inr": average,
@@ -89,6 +101,60 @@ def pipeline_health(
             included_rows=valid_amounts,
             exclusions=dict(exclusions),
             normalization_notes=notes,
+            duplicate_records=duplicates,
+        ),
+    )
+
+
+def won_revenue(
+    deals: Sequence[Record], *, usd_to_inr_rate: Decimal | None = None
+) -> AnalysisResult:
+    """Use valid Won deal value as a transparent revenue proxy.
+
+    The Deals board has no accounting-recognition or payment data, so this metric
+    deliberately labels itself as won deal value rather than recognized revenue.
+    """
+    total = Decimal("0")
+    won_count = 0
+    valid_amounts = 0
+    won_deals: list[Record] = []
+    exclusions: Counter[str] = Counter()
+    for deal in deals:
+        status = classify_deal_lifecycle(deal)
+        if status == "unknown":
+            exclusions["revenue_status:unknown"] += 1
+            continue
+        if status != "closed_won":
+            exclusions["revenue_status:not_won"] += 1
+            continue
+        won_count += 1
+        won_deals.append(deal)
+        amount = _amount(deal, usd_to_inr_rate)
+        if amount.is_valid and amount.value is not None:
+            total += amount.value
+            valid_amounts += 1
+        else:
+            exclusions[amount.reason or "invalid_currency"] += 1
+
+    average = total / valid_amounts if valid_amounts else None
+    duplicates = _duplicate_pairs(won_deals, usd_to_inr_rate)
+    return AnalysisResult(
+        metrics={
+            "source_deal_count": len(deals),
+            "won_deal_count": won_count,
+            "won_deals_with_valid_amount": valid_amounts,
+            "won_deal_value_inr": total,
+            "average_won_deal_value_inr": average,
+        },
+        quality=DataQualityReport(
+            total_rows=len(deals),
+            included_rows=valid_amounts,
+            exclusions=dict(exclusions),
+            normalization_notes=[
+                "Won deal value is a bookings/revenue proxy, not accounting-recognized revenue or collected cash.",
+                "Only canonical Won stages with valid amounts are included; amounts are normalized to INR base units.",
+                "Duplicate-ish won deals are flagged for review and are not merged.",
+            ],
             duplicate_records=duplicates,
         ),
     )
@@ -204,6 +270,10 @@ def pipeline_by_sector(
     exclusions: Counter[str] = Counter()
     valid_amounts = 0
     for deal in deals:
+        status = classify_deal_lifecycle(deal)
+        if status != "active":
+            exclusions[f"pipeline_status:{status}"] += 1
+            continue
         sector = normalize_sector(record_value(deal, "sector", "industry", "vertical"))
         label = sector.value or "Unclassified"
         sectors[label]["deal_count"] = int(sectors[label]["deal_count"]) + 1
@@ -220,6 +290,10 @@ def pipeline_by_sector(
     return AnalysisResult(
         metrics={
             "sectors": {key: sectors[key] for key in sorted(sectors)},
+            "source_deal_count": len(deals),
+            "active_deal_count": sum(
+                int(values["deal_count"]) for values in sectors.values()
+            ),
             "included_row_basis": "rows_with_valid_amount",
         },
         quality=DataQualityReport(
@@ -227,6 +301,7 @@ def pipeline_by_sector(
             included_rows=valid_amounts,
             exclusions=dict(exclusions),
             normalization_notes=[
+                "Sector pipeline includes active opportunities only; terminal and unknown-stage rows are excluded.",
                 "Sector aliases and conservative fuzzy matching are applied; uncertain labels remain Unclassified.",
                 "included_rows counts rows with a valid amount; field-scoped sector issues do not independently remove rows.",
             ],

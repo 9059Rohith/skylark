@@ -4,7 +4,7 @@ from collections import Counter
 from collections.abc import Sequence
 
 from app.cleaning.quality_report import DataQualityReport
-from app.cleaning.normalizer import normalize_stage
+from app.intelligence.deal_lifecycle import classify_deal_lifecycle
 from app.intelligence.records import Record, normalized_key, record_value, text_value
 from app.intelligence.schemas import AnalysisResult
 
@@ -54,13 +54,7 @@ def won_deals_without_work_orders(
     exclusions: Counter[str] = Counter()
     exclusions.update(work_order_exclusions)
     for deal in deals:
-        deal_status = record_value(deal, "deal_status")
-        stage = normalize_stage(
-            deal_status
-            if text_value(deal_status) is not None
-            else record_value(deal, "stage", "status", "deal_stage")
-        ).value
-        if stage != "Won":
+        if classify_deal_lifecycle(deal) != "closed_won":
             exclusions["not_won"] += 1
             continue
         won_count += 1

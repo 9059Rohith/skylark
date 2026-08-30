@@ -1,12 +1,14 @@
+<!-- markdownlint-disable MD013 MD060 -->
+
 # Release verification
 
 ## Automated gates
 
-- [x] Backend full pytest suite (192 tests)
+- [x] Backend full pytest suite (204 tests)
 - [x] Backend Ruff and Python compile
 - [x] Frontend Vitest, ESLint, TypeScript, and production build
 - [x] High-severity npm audit
-- [x] Five mocked archetypes through FastAPI SSE; frontend reducers/components exercised with synthetic SSE
+- [x] Six mocked business routes through FastAPI SSE; 39 frontend tests exercise reducers, proxying, accessibility, and components
 - [x] Next.js proxy preserves a progressively delivered upstream SSE body
 - [x] Compose, JSON, and YAML validation
 - [x] Backend and standalone frontend container builds; production images smoke-tested (backend readiness `503` without secrets, frontend `200`)
@@ -30,7 +32,7 @@ The captures preserve the concept's dark green editorial palette, lime status/ac
 1. [x] Publish the canonical repository at `https://github.com/9059Rohith/skylark`.
 2. [x] Deploy the public FastAPI fallback and Next.js frontend under Rohith's Vercel account.
 3. [x] Verify browser render, prompt submission, frontend proxy, backend SSE contract, and zero browser console errors.
-4. [ ] Import both workbooks into monday and supply the token, two board IDs, and OpenAI key in the backend secret store.
-5. [ ] Confirm `/health` reports ready without exposing configuration values.
-6. [ ] Exercise all five prompts against the live boards; compare item counts and quality exclusions with monday.
+4. [x] Import both workbooks into monday and supply the token, two board IDs, and OpenAI key in the backend secret store.
+5. [x] Confirm `/health` reports ready without exposing configuration values.
+6. [x] Exercise the five required prompts plus revenue against the live boards; verify expected source routing, terminal events, and zero SSE errors.
 7. [ ] Restrict `CORS_ALLOW_ORIGINS` to the final frontend origin after credentials are configured.

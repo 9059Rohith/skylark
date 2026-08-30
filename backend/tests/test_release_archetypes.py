@@ -12,6 +12,7 @@ from tests.test_agent_graph import FakeMonday, dependencies, settings
     ("prompt", "intent", "source_names", "leadership_event"),
     [
         ("How healthy is our pipeline?", "pipeline_health", {"Deals"}, False),
+        ("What revenue did we win?", "revenue", {"Deals"}, False),
         (
             "Which won deals have no work orders?",
             "won_without_work_orders",

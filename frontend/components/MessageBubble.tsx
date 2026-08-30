@@ -1,5 +1,4 @@
-// Accessible message rendering is implemented in Task 4.
-import { AlertTriangle, RotateCcw } from "lucide-react";
+import { RotateCcw } from "lucide-react";
 import type { ChatTurn } from "@/lib/types";
 import { LeadershipUpdateCard } from "@/components/LeadershipUpdateCard";
 
@@ -21,11 +20,6 @@ export function MessageBubble({ turn, onRetry }: Props) {
               <span className="thinking-dot" aria-hidden="true" />
               {turn.statusMessage ?? "Thinking through the evidence…"}
             </div>
-          ) : null}
-          {turn.caveats.length ? (
-            <p className="inline-caveat">
-              <AlertTriangle aria-hidden="true" size={17} /> {turn.caveats[0]}
-            </p>
           ) : null}
           {turn.leadershipUpdate ? <LeadershipUpdateCard update={turn.leadershipUpdate} /> : null}
           {turn.error ? (

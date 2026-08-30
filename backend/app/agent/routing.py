@@ -12,6 +12,7 @@ from app.cleaning.rules import SECTOR_ALIASES
 
 class Intent(StrEnum):
     PIPELINE_HEALTH = "pipeline_health"
+    REVENUE = "revenue"
     WON_WITHOUT_WORK_ORDERS = "won_without_work_orders"
     WORK_ORDER_COMPLETION = "work_order_completion"
     DATA_QUALITY = "data_quality"
@@ -197,6 +198,9 @@ def parse_intent(
     elif any(word in lowered for word in ("missing", "quality", "invalid", "duplicate")):
         intent = Intent.DATA_QUALITY
         recognized = True
+    elif any(word in lowered for word in ("revenue", "bookings", "booked value")):
+        intent = Intent.REVENUE
+        recognized = True
     elif pending_kind in {"sector", "data_quality_full_board"} and pending_intent:
         intent = Intent(pending_intent)
         recognized = True
@@ -253,7 +257,7 @@ def parse_intent(
         }
     elif not recognized:
         clarification = (
-            "Which view do you need: pipeline health, won deals without work orders, "
+            "Which view do you need: pipeline health, revenue, won deals without work orders, "
             "work-order completion, data quality, or a leadership update?"
         )
         pending = {"kind": "intent", "options": [intent.value]}

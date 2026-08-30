@@ -7,6 +7,7 @@ from app.intelligence.pipeline_metrics import (
     pipeline_by_sector,
     pipeline_health,
     stage_conversion,
+    won_revenue,
 )
 from app.intelligence.schemas import AnalysisResult
 
@@ -17,5 +18,6 @@ __all__ = [
     "pipeline_by_sector",
     "pipeline_health",
     "stage_conversion",
+    "won_revenue",
     "won_deals_without_work_orders",
 ]

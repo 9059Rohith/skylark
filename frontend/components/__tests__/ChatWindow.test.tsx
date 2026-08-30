@@ -17,10 +17,21 @@ function sseResponse(chunks: string[]) {
 
 const releaseArchetypes = [
   ["pipeline_health", "How healthy is our pipeline?", "Pipeline answer."],
+  ["revenue", "What revenue did we win?", "Revenue answer."],
   ["won_without_work_orders", "Which won deals have no work orders?", "Gap answer."],
   ["work_order_completion", "What is average work order completion time?", "Completion answer."],
   ["data_quality", "How many deals are missing close dates?", "Quality answer."],
 ] as const;
+
+it("shows an honest submission identity without unfinished navigation", () => {
+  render(<ChatWindow />);
+
+  expect(screen.getByText("Rohith")).toBeVisible();
+  expect(screen.getByText("Project author")).toBeVisible();
+  expect(screen.queryByText("Arjun Rao")).not.toBeInTheDocument();
+  expect(screen.queryByText("Alerts")).not.toBeInTheDocument();
+  expect(screen.queryByText("Settings")).not.toBeInTheDocument();
+});
 
 it.each(releaseArchetypes)("renders the mocked %s archetype through the chat UI", async (intent, prompt, answer) => {
   const user = userEvent.setup();
@@ -183,6 +194,21 @@ it("keeps the transcript out of the live region while announcing new assistant t
   await user.type(screen.getByRole("textbox"), "Question");
   await user.click(screen.getByRole("button", { name: /send message/i }));
   expect(await screen.findByText("A narrow announcement.")).toHaveAttribute("aria-live", "polite");
+});
+
+it("renders a material caveat only once inside the conversation turn", async () => {
+  const user = userEvent.setup();
+  vi.spyOn(globalThis, "fetch").mockResolvedValue(sseResponse([
+    'event: caveats\ndata: {"event":"caveats","caveats":["1 row excluded."],"quality":{"total_rows":2,"included_rows":1,"exclusions":{"invalid_currency":1},"normalization_notes":[],"duplicate_records":[]}}\n\n',
+    'event: token\ndata: {"event":"token","token":"Answer. Material caveat: 1 row excluded."}\n\n',
+    'event: done\ndata: {"event":"done","session_id":"x","intent":"pipeline_health"}\n\n',
+  ]));
+  render(<ChatWindow />);
+
+  await user.type(screen.getByRole("textbox"), "Question");
+  await user.click(screen.getByRole("button", { name: /send message/i }));
+  const turn = await screen.findByRole("article", { name: /conversation turn/i });
+  await waitFor(() => expect(within(turn).getAllByText(/1 row excluded/)).toHaveLength(1));
 });
 
 it("retains partial evidence and shows a safe error for a truncated stream", async () => {

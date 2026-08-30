@@ -26,6 +26,7 @@ def test_live_dropdown_sector_flows_from_transport_to_sector_analysis() -> None:
                                 "columns": [
                                     {"id": "sector", "title": "Sector", "type": "dropdown", "settings": {}},
                                     {"id": "amount", "title": "Amount", "type": "numbers", "settings": {}},
+                                    {"id": "stage", "title": "Deal Stage", "type": "status", "settings": {}},
                                 ],
                             }
                         ]
@@ -46,8 +47,9 @@ def test_live_dropdown_sector_flows_from_transport_to_sector_analysis() -> None:
                                             "id": "d-1",
                                             "name": "Acme",
                                             "column_values": [
-                                                {"id": "sector", "type": "dropdown", "text": "Energy", "value": '{"ids":[1]}'},
-                                                {"id": "amount", "type": "numbers", "text": "100", "value": "100"},
+                                                    {"id": "sector", "type": "dropdown", "text": "Energy", "value": '{"ids":[1]}'},
+                                                    {"id": "amount", "type": "numbers", "text": "100", "value": "100"},
+                                                    {"id": "stage", "type": "status", "text": "Proposal", "value": '{"label":"Proposal"}'},
                                             ],
                                         }
                                     ],
@@ -74,7 +76,9 @@ def test_live_dropdown_sector_flows_from_transport_to_sector_analysis() -> None:
 
 def test_multi_select_sector_remains_unclassified_with_explicit_quality_reason() -> None:
     """Selecting the first of multiple sectors would invent an arbitrary classification."""
-    analysis = pipeline_by_sector([{"id": "d-1", "sector": ["Energy", "Retail"], "amount": "100"}])
+    analysis = pipeline_by_sector(
+        [{"id": "d-1", "stage": "Proposal", "sector": ["Energy", "Retail"], "amount": "100"}]
+    )
 
     assert analysis.metrics["sectors"] == {
         "Unclassified": {"deal_count": 1, "total_value_inr": Decimal("100")}
@@ -176,6 +180,7 @@ class ActualWorkbookSectorMonday:
             columns=(
                 ColumnSchema(id="amount", title="Masked Deal value", type="numbers"),
                 ColumnSchema(id="sector", title="Sector/service", type="dropdown"),
+                ColumnSchema(id="stage", title="Deal Stage", type="status"),
             ),
         )
 
@@ -183,12 +188,12 @@ class ActualWorkbookSectorMonday:
         return BoardItemsResult(
             board_id=board_id,
             items=(
-                MondayItem(id="d-1", name="Energy survey", values={"amount": "100", "sector": "Energy"}),
-                MondayItem(id="d-2", name="Renewable survey", values={"amount": "200", "sector": "Renewables"}),
-                MondayItem(id="d-3", name="Powerline survey", values={"amount": "300", "sector": "Powerline"}),
-                MondayItem(id="d-4", name="Mixed survey", values={"amount": "400", "sector": ["Renewables", "Mining"]}),
-                MondayItem(id="d-5", name="Unknown survey", values={"amount": "500", "sector": "???"}),
-                MondayItem(id="d-6", name="Retail survey", values={"amount": "600", "sector": "Retail"}),
+                MondayItem(id="d-1", name="Energy survey", values={"amount": "100", "sector": "Energy", "stage": "Proposal"}),
+                MondayItem(id="d-2", name="Renewable survey", values={"amount": "200", "sector": "Renewables", "stage": "Proposal"}),
+                MondayItem(id="d-3", name="Powerline survey", values={"amount": "300", "sector": "Powerline", "stage": "Proposal"}),
+                MondayItem(id="d-4", name="Mixed survey", values={"amount": "400", "sector": ["Renewables", "Mining"], "stage": "Proposal"}),
+                MondayItem(id="d-5", name="Unknown survey", values={"amount": "500", "sector": "???", "stage": "Proposal"}),
+                MondayItem(id="d-6", name="Retail survey", values={"amount": "600", "sector": "Retail", "stage": "Proposal"}),
             ),
         )
 

@@ -8,7 +8,7 @@
 
 <p>
   <a href="https://github.com/9059Rohith/skylark/actions/workflows/ci.yml"><img src="https://img.shields.io/github/actions/workflow/status/9059Rohith/skylark/ci.yml?branch=main&label=build&logo=github" alt="Build status"></a>
-  <img src="https://img.shields.io/badge/license-TODO-lightgrey" alt="License not selected">
+  <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue" alt="MIT License"></a>
   <a href="https://github.com/9059Rohith/skylark/stargazers"><img src="https://img.shields.io/github/stars/9059Rohith/skylark?style=flat&logo=github" alt="GitHub stars"></a>
   <a href="https://github.com/9059Rohith/skylark/commits/main"><img src="https://img.shields.io/github/last-commit/9059Rohith/skylark?logo=git" alt="Last commit"></a>
 </p>
@@ -142,6 +142,7 @@ The data pipeline preserves original values for traceability, normalizes only th
 - **Live, read-only monday.com access** 🔒 — retrieves current board data through query-only GraphQL with no mutations or write tools.
 - **Resilient messy-data normalization** 🧹 — handles multiple date formats, INR/USD notation, Indian lakh/crore suffixes, fuzzy sectors, blanks, and inconsistent casing.
 - **Deterministic business metrics** 📐 — keeps filtering, joins, arithmetic, denominators, and exclusions out of the language model.
+- **Truthful pipeline and revenue semantics** — separates active opportunities from terminal deals and labels won deal value as a revenue proxy rather than accounting-recognized revenue.
 - **Cross-board sales-to-delivery analysis** 🔗 — identifies won deals without matching work orders using explicit relations, normalized deal names, and client-code fallbacks.
 - **Visible data-quality accounting** 🛡️ — returns source counts, missing fields, excluded rows, normalization decisions, duplicate-like pairs, and partial-fetch warnings.
 - **Conversational follow-ups** 💬 — preserves bounded UUIDv4 session context for questions such as “break that down by sector.”
@@ -328,6 +329,7 @@ curl --no-buffer \
 Useful founder-level prompts:
 
 - `How is our pipeline looking for Energy this quarter?`
+- `What revenue did we win this quarter?`
 - `Which won deals do not yet have a corresponding work order?`
 - `What is our average work order completion time this month?`
 - `How much of our deals data is missing close dates?`
@@ -456,7 +458,7 @@ Python follows Ruff-enforced style; TypeScript must pass ESLint and strict type 
 
 | Name | Role | GitHub | LinkedIn |
 |---|---|---|---|
-| Rohith | Full-stack and AI engineer | [@9059Rohith](https://github.com/9059Rohith) | `<TODO: fill in>` |
+| Rohith | Full-stack and AI engineer | [@9059Rohith](https://github.com/9059Rohith) | Not provided |
 
 ## Acknowledgements
 
@@ -471,9 +473,9 @@ The spreadsheet files are used only for a one-time manual import into monday.com
 
 ## License
 
-![License: TODO](https://img.shields.io/badge/license-TODO-lightgrey)
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
 
-`<TODO: select a license type and add a LICENSE file. Until then, no open-source license is granted.>`
+Released under the [MIT License](LICENSE).
 
 <div align="center">
 

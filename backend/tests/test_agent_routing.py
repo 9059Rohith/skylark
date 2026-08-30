@@ -36,6 +36,14 @@ def test_cross_board_route_recognizes_founder_wording_with_corresponding_work_or
     assert decision.clarification_question is None
 
 
+def test_revenue_question_has_a_distinct_won_value_route() -> None:
+    """Treating revenue as active pipeline answers a different business question."""
+    decision = parse_intent("What revenue did we win this quarter?")
+
+    assert decision.intent.value == "revenue"
+    assert decision.clarification_question is None
+
+
 def test_follow_up_sector_breakdown_reuses_prior_intent_and_scope() -> None:
     """Losing persisted context makes a natural follow-up impossible to answer."""
     prior = parse_intent("How healthy is our pipeline this quarter?")
@@ -93,7 +101,7 @@ def test_genuinely_unresolved_business_scope_asks_one_targeted_question() -> Non
     decision = parse_intent("How are things looking?")
 
     assert decision.clarification_question == (
-        "Which view do you need: pipeline health, won deals without work orders, "
+        "Which view do you need: pipeline health, revenue, won deals without work orders, "
         "work-order completion, data quality, or a leadership update?"
     )
 
