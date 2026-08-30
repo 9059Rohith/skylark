@@ -4,7 +4,7 @@ Skylark Signal is a hosted-ready conversational BI workspace for live, read-only
 
 **Live application:** **[PENDING DEPLOYMENT — owner must connect Render, Vercel, and production secrets]**
 
-**Source repository:** **[PENDING PUBLICATION — owner must publish the reviewed repository]**
+**Source repository:** **https://github.com/Ajey95/skylark-bi-agent**
 
 ## Architecture
 
