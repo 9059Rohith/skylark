@@ -1,6 +1,6 @@
 "use client";
 
-import { FormEvent, KeyboardEvent, useCallback, useEffect, useRef, useState } from "react";
+import { FormEvent, KeyboardEvent as ReactKeyboardEvent, useCallback, useEffect, useRef, useState } from "react";
 import {
   Bell,
   ChevronDown,
@@ -37,8 +37,11 @@ export function ChatWindow() {
   const [evidenceOpen, setEvidenceOpen] = useState(false);
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const endRef = useRef<HTMLDivElement>(null);
+  const evidenceTriggerRef = useRef<HTMLButtonElement>(null);
+  const dialogRef = useRef<HTMLDivElement>(null);
   const abortRef = useRef<AbortController | null>(null);
   const sessionRef = useRef<string | null>(null);
+  const activeTurn = turns.at(-1);
 
   useEffect(() => {
     sessionRef.current = getOrCreateSessionId(window.localStorage);
@@ -46,9 +49,22 @@ export function ChatWindow() {
     return () => abortRef.current?.abort();
   }, []);
 
+  useEffect(() => {
+    if (!turns.length) return;
+    const reduceMotion = window.matchMedia?.("(prefers-reduced-motion: reduce)").matches ?? false;
+    requestAnimationFrame(() => endRef.current?.scrollIntoView({
+      behavior: reduceMotion ? "auto" : "smooth",
+      block: "end",
+    }));
+  }, [turns.length, activeTurn?.status, activeTurn?.stage]);
+
+  useEffect(() => {
+    if (!evidenceOpen) return;
+    dialogRef.current?.querySelector<HTMLElement>("[data-dialog-close]")?.focus();
+  }, [evidenceOpen]);
+
   const updateTurn = useCallback((turnId: string, update: (turn: ChatTurn) => ChatTurn) => {
     setTurns((current) => current.map((turn) => turn.id === turnId ? update(turn) : turn));
-    requestAnimationFrame(() => endRef.current?.scrollIntoView({ behavior: "smooth", block: "end" }));
   }, []);
 
   const sendPrompt = useCallback(async (prompt: string) => {
@@ -102,7 +118,7 @@ export function ChatWindow() {
     void sendPrompt(draft);
   }
 
-  function handleKeyDown(event: KeyboardEvent<HTMLTextAreaElement>) {
+  function handleKeyDown(event: ReactKeyboardEvent<HTMLTextAreaElement>) {
     if (event.key === "Enter" && !event.shiftKey) {
       event.preventDefault();
       if (!isSending) void sendPrompt(draft);
@@ -118,7 +134,33 @@ export function ChatWindow() {
     window.setTimeout(() => inputRef.current?.focus(), 0);
   }
 
-  const activeTurn = turns.at(-1);
+  const closeEvidence = useCallback(() => {
+    setEvidenceOpen(false);
+    evidenceTriggerRef.current?.focus();
+  }, []);
+
+  function handleDialogKeyDown(event: ReactKeyboardEvent<HTMLDivElement>) {
+    if (event.key === "Escape") {
+      event.preventDefault();
+      closeEvidence();
+      return;
+    }
+    if (event.key !== "Tab") return;
+    const focusable = Array.from(dialogRef.current?.querySelectorAll<HTMLElement>(
+      'button:not([disabled]), [href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])',
+    ) ?? []).filter((element) => !element.hasAttribute("hidden"));
+    if (!focusable.length) {
+      event.preventDefault();
+      dialogRef.current?.focus();
+      return;
+    }
+    const first = focusable[0];
+    const last = focusable.at(-1);
+    if (focusable.length === 1 || (event.shiftKey && document.activeElement === first) || (!event.shiftKey && document.activeElement === last)) {
+      event.preventDefault();
+      (event.shiftKey ? last : first)?.focus();
+    }
+  }
 
   return (
     <div className="app-shell">
@@ -128,13 +170,13 @@ export function ChatWindow() {
           <div><strong>Skylark Signal</strong><span>Live business intelligence</span></div>
         </div>
         <button className="new-conversation" type="button" onClick={startNewConversation}>
-          <Plus aria-hidden="true" size={17} /> New conversation <kbd>⌘ K</kbd>
+          <Plus aria-hidden="true" size={17} /> New conversation
         </button>
         <nav>
           <a href="#conversation" aria-current="page"><Home aria-hidden="true" size={18} /> Home</a>
-          <a href="#alerts"><Bell aria-hidden="true" size={18} /> Alerts <span className="nav-dot" /></a>
+          <span className="nav-label"><Bell aria-hidden="true" size={18} /> Alerts <span className="nav-dot" /></span>
           <a href="#evidence"><Database aria-hidden="true" size={18} /> Data</a>
-          <a href="#settings"><Settings aria-hidden="true" size={18} /> Settings</a>
+          <span className="nav-label"><Settings aria-hidden="true" size={18} /> Settings</span>
         </nav>
         <div className="recent">
           <h2>Founder prompts</h2>
@@ -155,12 +197,20 @@ export function ChatWindow() {
         <header className="conversation-header">
           <div><MessageSquare aria-hidden="true" size={18} /><h1>Conversation</h1></div>
           <span className="live-indicator"><i aria-hidden="true" /> Live</span>
-          <button type="button" className="mobile-icon-button" aria-label="Open evidence panel" onClick={() => setEvidenceOpen(true)}>
+          <button
+            ref={evidenceTriggerRef}
+            type="button"
+            className="mobile-icon-button"
+            aria-label="Open evidence panel"
+            aria-controls="mobile-evidence-dialog"
+            aria-expanded={evidenceOpen}
+            onClick={() => setEvidenceOpen(true)}
+          >
             <PanelRightOpen aria-hidden="true" />
           </button>
         </header>
 
-        <div className="conversation-body" aria-live="polite">
+        <div className="conversation-body" data-testid="transcript">
           {!turns.length ? (
             <section className="empty-state">
               <SignalMark />
@@ -201,15 +251,33 @@ export function ChatWindow() {
         </div>
       </main>
 
-      <div id="evidence" className={evidenceOpen ? "evidence-shell open" : "evidence-shell"}>
+      <div id="evidence" className="evidence-shell desktop-evidence">
         <SourcesPanel
           sources={activeTurn?.sources ?? []}
           caveats={activeTurn?.caveats ?? []}
           quality={activeTurn?.quality ?? null}
-          onClose={() => setEvidenceOpen(false)}
         />
       </div>
-      {evidenceOpen ? <button className="drawer-backdrop" aria-label="Close evidence panel" onClick={() => setEvidenceOpen(false)} /> : null}
+      {evidenceOpen ? <>
+        <div
+          id="mobile-evidence-dialog"
+          ref={dialogRef}
+          className="evidence-shell mobile-evidence open"
+          role="dialog"
+          aria-modal="true"
+          aria-label="Evidence and data quality"
+          tabIndex={-1}
+          onKeyDown={handleDialogKeyDown}
+        >
+          <SourcesPanel
+            sources={activeTurn?.sources ?? []}
+            caveats={activeTurn?.caveats ?? []}
+            quality={activeTurn?.quality ?? null}
+            onClose={closeEvidence}
+          />
+        </div>
+        <button className="drawer-backdrop" aria-label="Dismiss evidence overlay" onClick={closeEvidence} />
+      </> : null}
     </div>
   );
 }

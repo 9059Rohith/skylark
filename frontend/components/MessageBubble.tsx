@@ -15,7 +15,7 @@ export function MessageBubble({ turn, onRetry }: Props) {
       <div className="assistant-row">
         <span aria-hidden="true" className="avatar signal-avatar">S</span>
         <div className="answer-copy">
-          {turn.answer ? <p className="answer-text">{turn.answer}</p> : null}
+          {turn.answer ? <p className="answer-text" aria-live="polite" aria-atomic="false">{turn.answer}</p> : null}
           {turn.status === "streaming" ? (
             <div className="thinking" role="status" aria-live="polite">
               <span className="thinking-dot" aria-hidden="true" />

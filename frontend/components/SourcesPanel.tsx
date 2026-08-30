@@ -1,7 +1,7 @@
 // Source lineage and caveat rendering is implemented in Task 4.
 "use client";
 
-import { useState } from "react";
+import { useId, useState } from "react";
 import { AlertTriangle, Check, Database, ShieldCheck } from "lucide-react";
 import type { DataQualityReport, Source } from "@/lib/types";
 
@@ -16,15 +16,18 @@ const humanize = (value: string) => value.split(":").at(-1)?.replaceAll("_", " "
 
 export function SourcesPanel({ sources, caveats, quality, onClose }: Props) {
   const [detailsOpen, setDetailsOpen] = useState(false);
+  const panelId = useId();
+  const sourcesId = `${panelId}-sources`;
+  const qualityId = `${panelId}-quality`;
   return (
     <aside className="evidence-rail" aria-label="Evidence and data quality">
       {onClose ? (
-        <button type="button" className="mobile-close" onClick={onClose} aria-label="Close evidence panel">×</button>
+        <button type="button" className="mobile-close" data-dialog-close onClick={onClose} aria-label="Close evidence panel">×</button>
       ) : null}
-      <section className="evidence-section" aria-labelledby="sources-title">
+      <section className="evidence-section" aria-labelledby={sourcesId}>
         <div className="rail-heading">
           <Database aria-hidden="true" size={19} />
-          <h2 id="sources-title">Sources queried</h2>
+          <h2 id={sourcesId}>Sources queried</h2>
         </div>
         {sources.length ? (
           <div className="source-timeline">
@@ -53,10 +56,10 @@ export function SourcesPanel({ sources, caveats, quality, onClose }: Props) {
         ) : <p className="empty-rail">Ask a question to see the live evidence used this turn.</p>}
       </section>
 
-      <section className="evidence-section quality-section" aria-labelledby="quality-title">
+      <section className="evidence-section quality-section" aria-labelledby={qualityId}>
         <div className="rail-heading">
           <ShieldCheck aria-hidden="true" size={20} />
-          <h2 id="quality-title">Data quality</h2>
+          <h2 id={qualityId}>Data quality</h2>
         </div>
         {caveats.map((caveat) => (
           <div className="quality-alert" key={caveat}>

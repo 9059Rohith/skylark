@@ -1,4 +1,4 @@
-import { render, screen, waitFor } from "@testing-library/react";
+import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { ChatWindow } from "@/components/ChatWindow";
 
@@ -82,4 +82,53 @@ it("rotates the session identifier when starting a new conversation", async () =
   const first = JSON.parse(fetchMock.mock.calls[0]?.[1]?.body as string);
   const second = JSON.parse(fetchMock.mock.calls[1]?.[1]?.body as string);
   expect(second.session_id).not.toBe(first.session_id);
+});
+
+it("uses a modal evidence dialog with focus containment, Escape close, and focus restore", async () => {
+  const user = userEvent.setup();
+  render(<ChatWindow />);
+  const trigger = screen.getByRole("button", { name: /open evidence panel/i });
+  expect(trigger).toHaveAttribute("aria-expanded", "false");
+  expect(screen.queryByRole("dialog", { name: /evidence and data quality/i })).not.toBeInTheDocument();
+  await user.click(trigger);
+  const dialog = screen.getByRole("dialog", { name: /evidence and data quality/i });
+  expect(trigger).toHaveAttribute("aria-expanded", "true");
+  expect(dialog).toHaveAttribute("aria-modal", "true");
+  expect(screen.getByRole("button", { name: /close evidence panel/i })).toHaveFocus();
+  await user.tab();
+  expect(dialog).toContainElement(document.activeElement as HTMLElement);
+  await user.tab({ shift: true });
+  expect(dialog).toContainElement(document.activeElement as HTMLElement);
+  await user.keyboard("{Escape}");
+  expect(screen.queryByRole("dialog", { name: /evidence and data quality/i })).not.toBeInTheDocument();
+  expect(trigger).toHaveFocus();
+  expect(trigger).toHaveAttribute("aria-expanded", "false");
+});
+
+it("keeps the transcript out of the live region while announcing new assistant text", async () => {
+  const user = userEvent.setup();
+  vi.spyOn(globalThis, "fetch").mockResolvedValue(sseResponse([
+    'event: token\ndata: {"event":"token","token":"A narrow announcement."}\n\n',
+    'event: done\ndata: {"event":"done","session_id":"x","intent":"pipeline_health"}\n\n',
+  ]));
+  render(<ChatWindow />);
+  expect(screen.getByTestId("transcript")).not.toHaveAttribute("aria-live");
+  await user.type(screen.getByRole("textbox"), "Question");
+  await user.click(screen.getByRole("button", { name: /send message/i }));
+  expect(await screen.findByText("A narrow announcement.")).toHaveAttribute("aria-live", "polite");
+});
+
+it("retains partial evidence and shows a safe error for a truncated stream", async () => {
+  const user = userEvent.setup();
+  vi.spyOn(globalThis, "fetch").mockResolvedValue(sseResponse([
+    'event: sources\ndata: {"event":"sources","sources":[{"board_id":"1","board_name":"Deals","item_count":2,"partial":false,"error":null}]}\n\n',
+    'event: token\ndata: {"event":"token","token":"Partial result"}\n\n',
+  ]));
+  render(<ChatWindow />);
+  await user.type(screen.getByRole("textbox"), "Question");
+  await user.click(screen.getByRole("button", { name: /send message/i }));
+  expect(await screen.findByText("Partial result")).toBeVisible();
+  expect(await screen.findByRole("alert")).toHaveTextContent("ended before completion");
+  await user.click(screen.getByRole("button", { name: /open evidence panel/i }));
+  expect(within(screen.getByRole("dialog")).getByRole("heading", { name: "Deals" })).toBeVisible();
 });
