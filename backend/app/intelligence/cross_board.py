@@ -23,8 +23,10 @@ def _relation_ids(value: object) -> set[str]:
 def won_deals_without_work_orders(
     deals: Sequence[Record], work_orders: Sequence[Record]
 ) -> AnalysisResult:
-    """Find won deals lacking an exact relation-ID or normalized-client match."""
-    usable_work_orders = []
+    """Match won deals through exclusive relation, name, then client phases."""
+    relation_work_orders: list[tuple[Record, set[str]]] = []
+    name_work_orders: list[tuple[Record, str]] = []
+    client_work_orders: list[tuple[Record, str]] = []
     work_order_exclusions: Counter[str] = Counter()
     for work_order in work_orders:
         relation_ids = _relation_ids(
@@ -34,31 +36,21 @@ def won_deals_without_work_orders(
             record_value(work_order, "client", "client_name", "customer")
         )
         deal_name = text_value(record_value(work_order, "deal_name", "name"))
-        if not relation_ids and deal_name is None and client is None:
+        if relation_ids:
+            relation_work_orders.append((work_order, relation_ids))
+        elif deal_name is not None:
+            name_work_orders.append((work_order, normalized_key(deal_name)))
+        elif client is not None:
+            client_work_orders.append((work_order, normalized_key(client)))
+        else:
             work_order_exclusions["work_order:missing_match_key"] += 1
-            continue
-        usable_work_orders.append(work_order)
-    work_order_deal_ids = set().union(
-        *(
-            _relation_ids(record_value(work_order, "deal_id", "linked_deal_id"))
-            for work_order in usable_work_orders
-        )
+    explicitly_linked_ids = set().union(
+        *(relation_ids for _, relation_ids in relation_work_orders)
     )
-    work_order_deal_names = {
-        normalized_key(value)
-        for work_order in usable_work_orders
-        if (value := text_value(record_value(work_order, "deal_name", "name")))
-    }
-    work_order_clients = {
-        normalized_key(value)
-        for work_order in usable_work_orders
-        if (value := text_value(record_value(work_order, "client", "client_name", "customer")))
-    }
 
     won_count = 0
     matchable_count = 0
-    matched = 0
-    missing: list[dict[str, str | None]] = []
+    target_deals: list[dict[str, str | None]] = []
     exclusions: Counter[str] = Counter()
     exclusions.update(work_order_exclusions)
     for deal in deals:
@@ -79,21 +71,56 @@ def won_deals_without_work_orders(
             exclusions["missing_match_key"] += 1
             continue
         matchable_count += 1
-        relation_match = deal_id is not None and deal_id in work_order_deal_ids
-        deal_name_match = (
-            deal_name is not None and normalized_key(deal_name) in work_order_deal_names
+        target_deals.append(
+            {"deal_id": deal_id, "deal_name": deal_name, "client": client}
         )
-        client_match = client is not None and normalized_key(client) in work_order_clients
-        if relation_match or deal_name_match or client_match:
-            matched += 1
-        else:
-            missing.append(
-                {
-                    "deal_id": deal_id,
-                    "deal_name": deal_name,
-                    "client": client,
-                }
-            )
+
+    matched_indexes = {
+        index
+        for index, deal in enumerate(target_deals)
+        if deal["deal_id"] is not None and deal["deal_id"] in explicitly_linked_ids
+    }
+    used_name_work_orders: set[int] = set()
+    for deal_index, deal in enumerate(target_deals):
+        if deal_index in matched_indexes or deal["deal_name"] is None:
+            continue
+        key = normalized_key(deal["deal_name"])
+        match_index = next(
+            (
+                index
+                for index, (_, candidate_key) in enumerate(name_work_orders)
+                if index not in used_name_work_orders and candidate_key == key
+            ),
+            None,
+        )
+        if match_index is not None:
+            used_name_work_orders.add(match_index)
+            matched_indexes.add(deal_index)
+
+    used_client_work_orders: set[int] = set()
+    for deal_index, deal in enumerate(target_deals):
+        if deal_index in matched_indexes or deal["client"] is None:
+            continue
+        key = normalized_key(deal["client"])
+        match_index = next(
+            (
+                index
+                for index, (_, candidate_key) in enumerate(client_work_orders)
+                if index not in used_client_work_orders and candidate_key == key
+            ),
+            None,
+        )
+        if match_index is not None:
+            used_client_work_orders.add(match_index)
+            matched_indexes.add(deal_index)
+
+    missing = [
+        deal for index, deal in enumerate(target_deals) if index not in matched_indexes
+    ]
+    matched = len(matched_indexes)
+    usable_work_order_count = (
+        len(relation_work_orders) + len(name_work_orders) + len(client_work_orders)
+    )
     return AnalysisResult(
         metrics={
             "won_deal_count": won_count,
@@ -103,10 +130,11 @@ def won_deals_without_work_orders(
         },
         quality=DataQualityReport(
             total_rows=len(deals) + len(work_orders),
-            included_rows=matchable_count + len(usable_work_orders),
+            included_rows=matchable_count + usable_work_order_count,
             exclusions=dict(exclusions),
             normalization_notes=[
-                "Work orders match won deals by exact relation ID, normalized deal name, then normalized client name.",
+                "Work orders match won deals by exclusive exact relation ID, normalized deal name, then normalized client name phases.",
+                "Unlinked name/client fallback work orders are consumed at most once in deterministic source order; source rows are never merged.",
                 "Quality accounting includes target deal rows and work orders with a usable relation, deal-name, or client match key.",
                 *(
                     ["Client matching used the monday item name where the Client column was blank or absent."]

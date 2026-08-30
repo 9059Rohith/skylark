@@ -33,7 +33,7 @@ Minimum useful fields vary by question. Missing required values are exclusions, 
 | Status | `Execution Status` | `status`, `work order status` | operational risk |
 | Sector | `Sector` | `industry`, `vertical`, `industry vertical` | optional breakdown |
 
-A work order is usable cross-board evidence only when it has a relation ID or normalized client match key. Otherwise it is reported as `work_order:missing_match_key`. A completion duration also requires valid start/completion dates and a non-negative interval.
+A work order is usable cross-board evidence only when it has an explicit relation ID, normalized deal name, or normalized client key. Matching uses that exclusive precedence; unlinked deal-name/client fallbacks are consumed at most once and never silently merged. Rows with no key are reported as `work_order:missing_match_key`. A completion duration also requires valid start/completion dates and a non-negative interval.
 
 ## Verification rules
 

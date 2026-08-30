@@ -183,9 +183,12 @@ class ActualWorkbookSectorMonday:
         return BoardItemsResult(
             board_id=board_id,
             items=(
-                MondayItem(id="d-1", name="Renewable survey", values={"amount": "100", "sector": "Renewables"}),
-                MondayItem(id="d-2", name="Powerline survey", values={"amount": "200", "sector": "Powerline"}),
-                MondayItem(id="d-3", name="Mine survey", values={"amount": "300", "sector": "Mining"}),
+                MondayItem(id="d-1", name="Energy survey", values={"amount": "100", "sector": "Energy"}),
+                MondayItem(id="d-2", name="Renewable survey", values={"amount": "200", "sector": "Renewables"}),
+                MondayItem(id="d-3", name="Powerline survey", values={"amount": "300", "sector": "Powerline"}),
+                MondayItem(id="d-4", name="Mixed survey", values={"amount": "400", "sector": ["Renewables", "Mining"]}),
+                MondayItem(id="d-5", name="Unknown survey", values={"amount": "500", "sector": "???"}),
+                MondayItem(id="d-6", name="Retail survey", values={"amount": "600", "sector": "Retail"}),
             ),
         )
 
@@ -200,5 +203,26 @@ async def test_energy_primary_archetype_expands_to_renewables_and_powerline() ->
 
     result = await runner.run_agent("How healthy is pipeline for Energy?", sid(52))
 
-    assert result["analysis"]["metrics"]["deal_count"] == 2
-    assert result["analysis"]["metrics"]["total_pipeline_value_inr"] == "300"
+    assert result["analysis"]["metrics"]["deal_count"] == 3
+    assert result["analysis"]["metrics"]["total_pipeline_value_inr"] == "600"
+
+
+@pytest.mark.asyncio
+async def test_energy_sector_scope_survives_into_sse_quality_denominator() -> None:
+    """Sector filtering must not erase invalid, ambiguous, or out-of-scope source rows."""
+    events = [
+        event
+        async for event in AgentRunner(
+            dependencies(ActualWorkbookSectorMonday())
+        ).stream_agent("How healthy is pipeline for Energy?", sid(53))
+    ]
+
+    caveats = next(event for event in events if event.event == "caveats")
+    assert caveats.quality.total_rows == 6
+    assert caveats.quality.included_rows == 3
+    assert caveats.quality.exclusions == {
+        "sector_scope:ambiguous_multi_select_sector": 1,
+        "sector_scope:low_confidence_sector": 1,
+        "sector_scope:outside_requested_sector": 1,
+    }
+    assert any("3 of 6 rows were excluded" in caveat for caveat in caveats.caveats)

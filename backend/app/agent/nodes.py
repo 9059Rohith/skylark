@@ -14,7 +14,7 @@ from pydantic_core import to_jsonable_python
 
 from app.agent.routing import Intent, parse_intent
 from app.agent.state import AgentContext, AgentState
-from app.cleaning import normalize_date, sector_matches_requested
+from app.cleaning import normalize_date, normalize_sector, sector_matches_requested
 from app.cleaning.quality_report import DataQualityReport
 from app.intelligence import (
     AnalysisResult,
@@ -177,6 +177,26 @@ def _filter_period(
     return included, dict(exclusions)
 
 
+def _filter_sector(
+    records: list[dict[str, Any]], requested: str
+) -> tuple[list[dict[str, Any]], dict[str, int]]:
+    included = []
+    exclusions: Counter[str] = Counter()
+    for record in records:
+        normalized = normalize_sector(record.get("sector"))
+        if normalized.is_valid and sector_matches_requested(
+            record.get("sector"), requested
+        ):
+            included.append(record)
+        elif not normalized.is_valid:
+            exclusions[
+                f"sector_scope:{normalized.reason or 'low_confidence_sector'}"
+            ] += 1
+        else:
+            exclusions["sector_scope:outside_requested_sector"] += 1
+    return included, dict(exclusions)
+
+
 def _with_scope_quality(
     result: AnalysisResult, exclusions: Mapping[str, int]
 ) -> AnalysisResult:
@@ -191,7 +211,7 @@ def _with_scope_quality(
         exclusions=dict(combined),
         normalization_notes=[
             *result.quality.normalization_notes,
-            "Rows outside or unassignable to the requested period remain in quality accounting.",
+            "Rows outside or unassignable to the requested scope remain in quality accounting.",
         ],
         duplicate_records=result.quality.duplicate_records,
     )
@@ -450,11 +470,12 @@ class GraphNodes:
             )
         sector = state.get("sector")
         if sector and "deals" in records:
-            records["deals"] = [
-                record
-                for record in records["deals"]
-                if sector_matches_requested(record.get("sector"), sector)
-            ]
+            records["deals"], sector_exclusions = _filter_sector(
+                records["deals"], sector
+            )
+            combined_scope = Counter(scope_exclusions.get("deals", {}))
+            combined_scope.update(sector_exclusions)
+            scope_exclusions["deals"] = dict(combined_scope)
         return {
             "records": records,
             "scope_exclusions": scope_exclusions,

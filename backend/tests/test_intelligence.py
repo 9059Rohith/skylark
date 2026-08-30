@@ -213,6 +213,36 @@ def test_cross_board_treats_closed_won_as_won() -> None:
     assert "not_won" not in result.quality.exclusions
 
 
+def test_explicit_relation_work_order_cannot_fallback_match_an_unlinked_deal() -> None:
+    """A linked work order's duplicate name must not satisfy a second unrelated deal."""
+    result = won_deals_without_work_orders(
+        [
+            {"id": "d-1", "deal_name": "Shared", "client": "Client", "deal_status": "Won"},
+            {"id": "d-2", "deal_name": "Shared", "client": "Client", "deal_status": "Won"},
+        ],
+        [{"id": "wo-1", "deal_id": "d-1", "deal_name": "Shared", "client": "Client"}],
+    )
+
+    assert result.metrics["matched_work_order_count"] == 1
+    assert result.metrics["missing_work_order_count"] == 1
+    assert result.metrics["missing_work_orders"][0]["deal_id"] == "d-2"
+
+
+def test_unlinked_name_fallback_work_order_is_consumed_once() -> None:
+    """One fallback work order cannot satisfy two won deals sharing a normalized name."""
+    result = won_deals_without_work_orders(
+        [
+            {"id": "d-1", "deal_name": "Shared", "client": "First", "deal_status": "Won"},
+            {"id": "d-2", "deal_name": " shared ", "client": "Second", "deal_status": "Won"},
+        ],
+        [{"id": "wo-1", "deal_name": "SHARED", "client": ""}],
+    )
+
+    assert result.metrics["matched_work_order_count"] == 1
+    assert result.metrics["missing_work_order_count"] == 1
+    assert result.metrics["missing_work_orders"][0]["deal_id"] == "d-2"
+
+
 def test_transport_relation_id_list_matches_won_deal_without_stringifying_sequence() -> None:
     """Transport relation arrays must remain usable as exact cross-board deal IDs."""
     relation_ids = normalize_column_value(
