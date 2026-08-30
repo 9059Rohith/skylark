@@ -261,17 +261,6 @@ def _deterministic_context() -> str:
     )
 
 
-def _sentence_count(value: str) -> int:
-    return len(re.findall(r"[.!?](?=\s|$)", value))
-
-
-def _up_to_four_sentences(value: str) -> str:
-    endings = list(re.finditer(r"[.!?](?=\s|$)", value))
-    if len(endings) <= 4:
-        return value
-    return value[: endings[3].end()]
-
-
 class GraphNodes:
     def __init__(self, dependencies: Any) -> None:
         self.dependencies = dependencies
@@ -559,23 +548,31 @@ class GraphNodes:
         sentence_count = 0
         max_chars = self.dependencies.settings.llm_context_max_chars
         if self.dependencies.llm is not None:
+            pending_sentence = ""
+            stop_stream = False
             async for piece in self.dependencies.llm.stream_synthesis(payload):
-                if any(character.isdigit() for character in piece):
+                pending_sentence += piece
+                if len(pending_sentence) > max_chars * 2:
                     break
-                remaining = max_chars - context_length
-                if remaining <= 0 or sentence_count >= 4:
-                    break
-                candidate = _up_to_four_sentences(piece[:remaining])
-                allowed_sentences = 4 - sentence_count
-                if _sentence_count(candidate) > allowed_sentences:
-                    endings = list(re.finditer(r"[.!?](?=\s|$)", candidate))
-                    candidate = candidate[: endings[allowed_sentences - 1].end()]
-                if candidate:
+                while ending := re.search(r"[.!?](?=\s|$)", pending_sentence):
+                    end = ending.end()
+                    while end < len(pending_sentence) and pending_sentence[end].isspace():
+                        end += 1
+                    candidate = pending_sentence[:end]
+                    pending_sentence = pending_sentence[end:]
+                    if any(character.isdigit() for character in candidate):
+                        continue
+                    if context_length + len(candidate) > max_chars:
+                        stop_stream = True
+                        break
                     writer({"event": "token", "token": candidate})
                     context_pieces.append(candidate)
                     context_length += len(candidate)
-                    sentence_count += _sentence_count(candidate)
-                if len(candidate) < len(piece) or sentence_count >= 4:
+                    sentence_count += 1
+                    if sentence_count >= 4:
+                        stop_stream = True
+                        break
+                if stop_stream:
                     break
         elif self.dependencies.settings.deterministic_synthesis_fallback:
             fallback = _deterministic_context()

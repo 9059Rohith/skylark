@@ -557,6 +557,29 @@ async def test_unvalidated_claude_numbers_are_not_emitted() -> None:
 
 
 @pytest.mark.asyncio
+async def test_numeric_sentence_split_across_deltas_is_discarded_atomically() -> None:
+    """Rejecting a later numeric delta must not leave a dangling sentence prefix."""
+
+    class SplitNumericClaude(FakeClaude):
+        async def stream_synthesis(self, payload: dict[str, Any]) -> AsyncIterator[str]:
+            yield "Pipeline health for Energy in "
+            yield "2026 Q3. The selected scope has no qualifying opportunities."
+
+    runner = AgentRunner(dependencies(FakeMonday(), SplitNumericClaude()))
+    events = [
+        event
+        async for event in runner.stream_agent(
+            "How healthy is the pipeline?", sid(40)
+        )
+    ]
+    streamed = "".join(event.token for event in events if event.event == "token")
+
+    assert "2026" not in streamed
+    assert "Pipeline health for Energy in" not in streamed
+    assert "The selected scope has no qualifying opportunities." in streamed
+
+
+@pytest.mark.asyncio
 async def test_quarter_scope_exclusions_remain_in_quality_accounting() -> None:
     """Filtering before analysis must not make undated source rows disappear silently."""
     result = await AgentRunner(dependencies(MissingScopeDateMonday())).run_agent(
