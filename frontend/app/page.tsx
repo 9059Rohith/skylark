@@ -1,4 +1,5 @@
-export default function Page() {
-  return null;
-}
+import { ChatWindow } from "@/components/ChatWindow";
 
+export default function Page() {
+  return <ChatWindow />;
+}
