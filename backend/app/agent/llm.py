@@ -11,6 +11,13 @@ from app.agent.prompts import INTENT_SYSTEM_PROMPT, SYNTHESIS_SYSTEM_PROMPT
 from app.config import Settings
 
 
+class LLMProviderError(RuntimeError):
+    """Sanitized provider failure safe to pass across the agent boundary."""
+
+
+_PROVIDER_FAILURE = "The language model could not complete the response. Please try again."
+
+
 class OpenAIService:
     """Bounded OpenAI Responses API adapter with true text-delta streaming."""
 
@@ -49,16 +56,40 @@ class OpenAIService:
         return value if isinstance(value, Mapping) else None
 
     async def stream_synthesis(self, payload: dict[str, Any]) -> AsyncIterator[str]:
-        async with self._client.responses.stream(
-            model=self._model,
-            max_output_tokens=self._max_tokens,
-            instructions=SYNTHESIS_SYSTEM_PROMPT,
-            input=json.dumps(payload, default=str, separators=(",", ":")),
-            store=False,
-        ) as stream:
-            async for event in stream:
-                if event.type == "response.output_text.delta":
-                    yield event.delta
+        completed = False
+        refusal_seen = False
+        text_seen = False
+        try:
+            async with self._client.responses.stream(
+                model=self._model,
+                max_output_tokens=self._max_tokens,
+                instructions=SYNTHESIS_SYSTEM_PROMPT,
+                input=json.dumps(payload, default=str, separators=(",", ":")),
+                store=False,
+            ) as stream:
+                async for event in stream:
+                    event_type = getattr(event, "type", "")
+                    if event_type == "response.output_text.delta":
+                        delta = getattr(event, "delta", "")
+                        if delta:
+                            text_seen = True
+                            yield delta
+                    elif event_type in {
+                        "error",
+                        "response.failed",
+                        "response.incomplete",
+                    }:
+                        raise LLMProviderError(_PROVIDER_FAILURE)
+                    elif event_type.startswith("response.refusal"):
+                        refusal_seen = True
+                    elif event_type == "response.completed":
+                        completed = True
+        except LLMProviderError:
+            raise
+        except Exception:
+            raise LLMProviderError(_PROVIDER_FAILURE) from None
+        if not completed or refusal_seen or not text_seen:
+            raise LLMProviderError(_PROVIDER_FAILURE)
 
     async def aclose(self) -> None:
         if self._owns_client:

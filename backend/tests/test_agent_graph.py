@@ -7,6 +7,7 @@ from zoneinfo import ZoneInfo
 import pytest
 
 from app.agent.graph import AgentDependencies, AgentRunner, build_graph, run_agent
+from app.agent.llm import OpenAIService
 from app.config import Settings
 from app.monday import (
     BoardItemsResult,
@@ -309,6 +310,32 @@ async def test_data_quality_period_clarification_accepts_full_board_answer() -> 
     assert answered["period"] is None
     assert answered["clarification_question"] is None
     assert answered["analysis"]["metrics"]["missing_close_date_count"] == 0
+    assert monday.max_active_fetches == 1
+
+
+@pytest.mark.asyncio
+async def test_data_quality_full_board_consent_rejects_negative_and_unrelated_replies() -> None:
+    """Substring matches must never turn negation or 'Yesterday' into scope consent."""
+    monday = FakeMonday()
+    runner = AgentRunner(dependencies(monday))
+    await runner.run_agent(
+        "How many deals are missing close dates this month?", sid(38)
+    )
+
+    for reply in (
+        "No, don't use the full board",
+        "Do not proceed",
+        "Yesterday was busy",
+    ):
+        result = await runner.run_agent(reply, sid(38))
+        assert result["node_trace"] == ["parse_intent", "clarify"]
+        assert result["pending_clarification"]["kind"] == "data_quality_full_board"
+        assert monday.max_active_fetches == 0
+
+    approved = await runner.run_agent("Use the full Deals board", sid(38))
+    assert approved["intent"] == "data_quality"
+    assert approved["period"] is None
+    assert approved["clarification_question"] is None
     assert monday.max_active_fetches == 1
 
 
@@ -646,6 +673,41 @@ async def test_required_cross_board_auth_failure_emits_error_without_false_metri
 
 
 @pytest.mark.asyncio
+async def test_missing_required_board_id_preserves_successful_board_provenance() -> None:
+    """Configuration failure on one board must not discard its concurrent peer result."""
+    configured = settings().model_copy(update={"work_orders_board_id": ""})
+    runner = AgentRunner(
+        AgentDependencies(
+            monday=FakeMonday(),
+            settings=configured,
+            clock=lambda: datetime(
+                2026, 8, 30, 11, 0, tzinfo=ZoneInfo("Asia/Kolkata")
+            ),
+        )
+    )
+
+    events = [
+        event
+        async for event in runner.stream_agent(
+            "Which won deals have no work orders?", sid(39)
+        )
+    ]
+
+    sources = next(event for event in events if event.event == "sources")
+    caveats = next(event for event in events if event.event == "caveats")
+    assert [(source.board_name, source.item_count) for source in sources.sources] == [
+        ("Deals", 2),
+        ("Work Orders", 0),
+    ]
+    assert sources.sources[1].partial is True
+    assert sources.sources[1].error == "Work Orders board is not configured."
+    assert caveats.caveats == ["Work Orders board is not configured."]
+    assert events[-1].event == "error"
+    assert events[-1].code == "required_source_unavailable"
+    assert not any(event.event in {"token", "done"} for event in events)
+
+
+@pytest.mark.asyncio
 async def test_single_board_partial_pages_compute_with_sanitized_partial_provenance() -> None:
     """Usable page-one rows may compute, but partial provenance must be explicit and safe."""
     events = [
@@ -685,3 +747,101 @@ async def test_total_rate_limit_failure_is_one_clean_error_event() -> None:
     assert events[-1].code == "required_source_unavailable"
     assert "rate-limited" in events[-1].message
     assert "HTTP 429" not in events[-1].message
+
+
+@pytest.mark.asyncio
+async def test_openai_failed_terminal_emits_sanitized_error_without_filler_or_done() -> None:
+    """A provider failure terminal is not a successful empty qualitative context."""
+
+    class FailedStream:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *args: object) -> None:
+            return None
+
+        def __aiter__(self):
+            async def events():
+                yield type(
+                    "FailedEvent",
+                    (),
+                    {
+                        "type": "response.failed",
+                        "response": type(
+                            "FailedResponse",
+                            (),
+                            {
+                                "error": type(
+                                    "Failure",
+                                    (),
+                                    {"message": "Bearer provider-secret"},
+                                )()
+                            },
+                        )(),
+                    },
+                )()
+
+            return events()
+
+    responses = type(
+        "Responses",
+        (),
+        {"stream": lambda self, **kwargs: FailedStream()},
+    )()
+    llm = OpenAIService(
+        settings().model_copy(update={"openai_api_key": "test-key"}),
+        client=type("Client", (), {"responses": responses})(),
+    )
+    runner = AgentRunner(
+        AgentDependencies(
+            monday=FakeMonday(),
+            settings=settings(),
+            llm=llm,
+            clock=lambda: datetime(
+                2026, 8, 30, 11, 0, tzinfo=ZoneInfo("Asia/Kolkata")
+            ),
+        )
+    )
+
+    events = [
+        event
+        async for event in runner.stream_agent(
+            "How healthy is the pipeline?", sid(40)
+        )
+    ]
+    tokens = "".join(event.token for event in events if event.event == "token")
+
+    assert events[-1].event == "error"
+    assert "provider-secret" not in events[-1].message
+    assert "normalized live board fields" not in tokens
+    assert "Material caveat:" not in tokens
+    assert not any(event.event == "done" for event in events)
+
+
+@pytest.mark.asyncio
+async def test_unconfigured_provider_error_uses_provider_neutral_wording() -> None:
+    """The public configuration error must remain true for either supported provider."""
+    configured = settings().model_copy(
+        update={"deterministic_synthesis_fallback": False}
+    )
+    runner = AgentRunner(
+        AgentDependencies(
+            monday=FakeMonday(),
+            settings=configured,
+            clock=lambda: datetime(
+                2026, 8, 30, 11, 0, tzinfo=ZoneInfo("Asia/Kolkata")
+            ),
+        )
+    )
+
+    events = [
+        event
+        async for event in runner.stream_agent(
+            "How healthy is the pipeline?", sid(41)
+        )
+    ]
+
+    assert events[-1].event == "error"
+    assert events[-1].message == (
+        "The language model is not configured and deterministic fallback is disabled."
+    )

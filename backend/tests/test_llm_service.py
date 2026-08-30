@@ -9,8 +9,8 @@ from app.config import Settings
 
 
 class FakeResponseStream:
-    def __init__(self) -> None:
-        self.events = (
+    def __init__(self, events: tuple[Any, ...] | None = None) -> None:
+        self.events = events or (
             SimpleNamespace(type="response.created"),
             SimpleNamespace(type="response.output_text.delta", delta="First context. "),
             SimpleNamespace(type="response.output_text.delta", delta="Second context."),
@@ -32,9 +32,10 @@ class FakeResponseStream:
 
 
 class FakeResponses:
-    def __init__(self) -> None:
+    def __init__(self, stream_events: tuple[Any, ...] | None = None) -> None:
         self.create_kwargs: dict[str, Any] | None = None
         self.stream_kwargs: dict[str, Any] | None = None
+        self.stream_events = stream_events
 
     async def create(self, **kwargs: Any) -> Any:
         self.create_kwargs = kwargs
@@ -42,12 +43,12 @@ class FakeResponses:
 
     def stream(self, **kwargs: Any) -> FakeResponseStream:
         self.stream_kwargs = kwargs
-        return FakeResponseStream()
+        return FakeResponseStream(self.stream_events)
 
 
 class FakeOpenAIClient:
-    def __init__(self) -> None:
-        self.responses = FakeResponses()
+    def __init__(self, stream_events: tuple[Any, ...] | None = None) -> None:
+        self.responses = FakeResponses(stream_events)
         self.closed = 0
 
     async def close(self) -> None:
@@ -117,3 +118,65 @@ async def test_openai_service_closes_only_the_client_it_constructs(monkeypatch) 
     owned_service = OpenAIService(Settings(openai_api_key="test-key"))
     await owned_service.aclose()
     assert owned.closed == 1
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "events",
+    [
+        (
+            SimpleNamespace(
+                type="error",
+                code="server_error",
+                message="Bearer upstream-secret",
+                param=None,
+                sequence_number=1,
+            ),
+        ),
+        (
+            SimpleNamespace(
+                type="response.failed",
+                response=SimpleNamespace(
+                    error=SimpleNamespace(
+                        code="server_error", message="Bearer upstream-secret"
+                    )
+                ),
+            ),
+        ),
+        (
+            SimpleNamespace(
+                type="response.incomplete",
+                response=SimpleNamespace(
+                    incomplete_details=SimpleNamespace(reason="max_output_tokens")
+                ),
+            ),
+        ),
+        (
+            SimpleNamespace(type="response.refusal.delta", delta="Cannot comply"),
+            SimpleNamespace(type="response.refusal.done", refusal="Cannot comply"),
+            SimpleNamespace(type="response.completed"),
+        ),
+    ],
+    ids=["error", "failed", "incomplete", "refusal-only"],
+)
+async def test_openai_failure_terminals_raise_one_sanitized_provider_error(
+    events: tuple[Any, ...],
+) -> None:
+    """SDK failure/refusal terminals must not look like a successful empty response."""
+    service = OpenAIService(
+        Settings(openai_api_key="test-key"),
+        client=FakeOpenAIClient(events),
+    )
+
+    with pytest.raises(
+        RuntimeError,
+        match="The language model could not complete the response",
+    ) as captured:
+        _ = [
+            delta
+            async for delta in service.stream_synthesis(
+                {"intent": "pipeline_health", "metrics": {}}
+            )
+        ]
+
+    assert "upstream-secret" not in str(captured.value)

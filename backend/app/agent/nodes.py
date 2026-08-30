@@ -337,10 +337,13 @@ class GraphNodes:
                 )
                 continue
             if isinstance(outcome, Exception):
-                if isinstance(outcome, AgentServiceError):
-                    raise outcome
                 board_name = kind.replace("_", " ").title()
-                public_error = f"{board_name} could not be read."
+                public_error = (
+                    f"{board_name} board is not configured."
+                    if isinstance(outcome, AgentServiceError)
+                    and outcome.code == "configuration"
+                    else f"{board_name} could not be read."
+                )
                 caveats.append(public_error)
                 sources.append(
                     {
@@ -522,7 +525,7 @@ class GraphNodes:
             sentence_count = 2
         else:
             raise AgentServiceError(
-                "Claude is not configured and deterministic fallback is disabled.",
+                "The language model is not configured and deterministic fallback is disabled.",
                 code="configuration",
             )
         context = "".join(context_pieces).strip()

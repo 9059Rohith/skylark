@@ -89,6 +89,38 @@ def _mentioned_sectors(message: str) -> list[str]:
     return found
 
 
+def _is_explicit_full_board_approval(message: str) -> bool:
+    """Accept deliberate consent while rejecting negation and substring collisions."""
+    normalized = re.sub(r"[^a-z0-9]+", " ", message.casefold()).strip()
+    if re.search(r"\b(?:no|not|never|dont|cancel|stop)\b", normalized) or any(
+        phrase in normalized for phrase in ("do not", "don t")
+    ):
+        return False
+    if re.match(r"^(?:yes|yep|yeah|affirmative|absolutely)\b", normalized):
+        return True
+    if normalized in {
+        "approve",
+        "approved",
+        "full board",
+        "full deals board",
+        "all deals",
+        "whole deals board",
+        "go ahead",
+        "okay",
+        "ok",
+        "proceed",
+        "sure",
+    }:
+        return True
+    return bool(
+        re.fullmatch(
+            r"(?:please )?(?:use|report across|check|review) "
+            r"(?:the )?(?:full|whole) (?:deals )?board(?: instead)?",
+            normalized,
+        )
+    )
+
+
 def parse_intent(
     message: str,
     *,
@@ -117,16 +149,9 @@ def parse_intent(
         if pending_clarification and pending_clarification.get("intent")
         else None
     )
-    full_board_quality_resolution = pending_kind == "data_quality_full_board" and any(
-        phrase in lowered
-        for phrase in (
-            "yes",
-            "full board",
-            "all deals",
-            "whole board",
-            "go ahead",
-            "proceed",
-        )
+    full_board_quality_resolution = (
+        pending_kind == "data_quality_full_board"
+        and _is_explicit_full_board_approval(message)
     )
     sector_resolution = (
         pending_kind == "sector"
