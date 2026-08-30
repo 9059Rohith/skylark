@@ -232,7 +232,12 @@ def _direct_answer(state: AgentState) -> str:
     elif intent == Intent.WON_WITHOUT_WORK_ORDERS:
         direct = f"{metrics.get('missing_work_order_count', 0)} won deal(s) have no matching work order."
     elif intent == Intent.WORK_ORDER_COMPLETION:
-        direct = f"Average work-order completion time is {metrics.get('average_completion_days')} calendar days."
+        average_days = metrics.get("average_completion_days")
+        direct = (
+            f"Average work-order completion time is {average_days} calendar days."
+            if average_days is not None
+            else "Average work-order completion time is unavailable for the selected period."
+        )
     elif intent == Intent.DATA_QUALITY:
         direct = f"{metrics.get('missing_close_date_count', 0)} deal(s) are missing close dates."
     else:

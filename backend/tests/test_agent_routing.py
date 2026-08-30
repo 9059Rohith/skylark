@@ -26,6 +26,16 @@ def test_required_query_archetypes_have_explicit_routes(
     assert decision.clarification_question is None
 
 
+def test_cross_board_route_recognizes_founder_wording_with_corresponding_work_order() -> None:
+    """Natural absence wording must not fall through to the generic deal route."""
+    decision = parse_intent(
+        "Which won deals don't yet have a corresponding work order?"
+    )
+
+    assert decision.intent == Intent.WON_WITHOUT_WORK_ORDERS
+    assert decision.clarification_question is None
+
+
 def test_follow_up_sector_breakdown_reuses_prior_intent_and_scope() -> None:
     """Losing persisted context makes a natural follow-up impossible to answer."""
     prior = parse_intent("How healthy is our pipeline this quarter?")

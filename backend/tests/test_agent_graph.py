@@ -366,6 +366,23 @@ async def test_completion_period_scopes_work_orders_by_completion_date() -> None
 
 
 @pytest.mark.asyncio
+async def test_empty_completion_scope_never_renders_python_none_to_founders() -> None:
+    """An unavailable KPI should be explicit instead of leaking a Python sentinel."""
+    events = [
+        event
+        async for event in AgentRunner(
+            dependencies(PriorMonthWorkOrderMonday())
+        ).stream_agent("What is work order completion time this month?", sid(12))
+    ]
+    answer = "".join(event.token for event in events if event.event == "token")
+
+    assert "None" not in answer
+    assert answer.startswith(
+        "Average work-order completion time is unavailable for the selected period."
+    )
+
+
+@pytest.mark.asyncio
 async def test_pipeline_month_scope_filters_deals_by_close_date() -> None:
     """Pipeline periods are defined by deal close date, with exclusions traceable."""
     result = await AgentRunner(dependencies(PriorMonthDealMonday())).run_agent(

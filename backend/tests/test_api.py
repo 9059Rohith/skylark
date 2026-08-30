@@ -53,6 +53,7 @@ class FakeStreamingAgent:
 
 def api_settings() -> Settings:
     return Settings(
+        _env_file=None,
         MONDAY_DEALS_BOARD_ID="101",
         MONDAY_WORK_ORDERS_BOARD_ID="202",
         deterministic_synthesis_fallback=True,

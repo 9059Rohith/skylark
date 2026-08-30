@@ -121,6 +121,21 @@ def _is_explicit_full_board_approval(message: str) -> bool:
     )
 
 
+def _asks_for_missing_work_orders(message: str) -> bool:
+    """Recognize common founder wording for the won-deal execution gap."""
+    normalized = re.sub(r"[^a-z0-9]+", " ", message.casefold()).strip()
+    if not re.search(r"\bwork orders?\b", normalized):
+        return False
+    return any(
+        re.search(pattern, normalized)
+        for pattern in (
+            r"\b(?:no|without|missing)\b.*\bwork orders?\b",
+            r"\b(?:do not|don t|dont)\s+(?:yet\s+)?have\b.*\bwork orders?\b",
+            r"\black(?:s|ing)?\b.*\bwork orders?\b",
+        )
+    )
+
+
 def parse_intent(
     message: str,
     *,
@@ -171,9 +186,7 @@ def parse_intent(
     elif "leadership" in lowered or "weekly update" in lowered:
         intent = Intent.LEADERSHIP_UPDATE
         recognized = True
-    elif "work order" in lowered and any(
-        phrase in lowered for phrase in ("no work", "without work", "missing work")
-    ):
+    elif _asks_for_missing_work_orders(message):
         intent = Intent.WON_WITHOUT_WORK_ORDERS
         recognized = True
     elif "work order" in lowered and any(
