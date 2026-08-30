@@ -1,0 +1,1 @@
+"""Synthetic test fixtures."""
