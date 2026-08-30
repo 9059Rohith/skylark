@@ -27,6 +27,33 @@ def _split_labels(value: object) -> list[str]:
     return [] if text is None else [part.strip() for part in text.split(",") if part.strip()]
 
 
+def _relation_ids(value: object) -> list[str]:
+    if not isinstance(value, dict):
+        return []
+    linked_values = (
+        value.get("linkedPulseIds")
+        or value.get("linkedItemIds")
+        or value.get("linked_item_ids")
+        or []
+    )
+    if not isinstance(linked_values, list):
+        return []
+    ids: list[str] = []
+    for linked_value in linked_values:
+        if isinstance(linked_value, dict):
+            linked_id = (
+                linked_value.get("linkedPulseId")
+                or linked_value.get("linkedItemId")
+                or linked_value.get("id")
+            )
+        else:
+            linked_id = linked_value
+        normalized_id = _clean_text(linked_id)
+        if normalized_id is not None:
+            ids.append(normalized_id)
+    return ids
+
+
 def normalize_column_value(raw: dict[str, Any], schema: ColumnSchema | None = None) -> object:
     """Reduce monday column variants to scalars/lists before business cleaning."""
     column_type = str(raw.get("type") or (schema.type if schema else "")).casefold()
@@ -56,7 +83,10 @@ def normalize_column_value(raw: dict[str, Any], schema: ColumnSchema | None = No
     if column_type == "dropdown":
         return _split_labels(text)
 
-    if column_type in {"mirror", "board_relation", "dependency"}:
+    if column_type in {"board_relation", "dependency"}:
+        return _relation_ids(decoded)
+
+    if column_type == "mirror":
         display = decoded.get("display_value") if isinstance(decoded, dict) else None
         return _split_labels(text or display)
 

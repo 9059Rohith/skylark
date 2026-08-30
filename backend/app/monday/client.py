@@ -317,7 +317,9 @@ class GraphQLMondayClient:
             return schema
 
     @staticmethod
-    def _item(raw_item: Mapping[str, Any]) -> MondayItem:
+    def _item(
+        raw_item: Mapping[str, Any], columns_by_id: Mapping[str, ColumnSchema]
+    ) -> MondayItem:
         values: dict[str, Any] = {}
         column_values = raw_item.get("column_values", [])
         if isinstance(column_values, list):
@@ -325,7 +327,9 @@ class GraphQLMondayClient:
                 if isinstance(raw_value, dict):
                     column_id = str(raw_value.get("id", ""))
                     if column_id:
-                        values[column_id] = normalize_column_value(raw_value)
+                        values[column_id] = normalize_column_value(
+                            raw_value, columns_by_id.get(column_id)
+                        )
         return MondayItem(
             id=str(raw_item.get("id", "")),
             name=str(raw_item.get("name", "")),
@@ -334,6 +338,8 @@ class GraphQLMondayClient:
 
     async def get_board_items(self, board_id: str) -> BoardItemsResult:
         board_id = self._validate_board_id(board_id)
+        schema = await self.get_board_schema(board_id)
+        columns_by_id = {column.id: column for column in schema.columns}
         payload = await self._execute(
             _FIRST_ITEMS_QUERY,
             {"boardIds": [board_id]},
@@ -354,32 +360,37 @@ class GraphQLMondayClient:
                 retryable=False,
             )
 
-        caveats = list(self._messages(payload))
+        caveats = [*schema.caveats, *self._messages(payload)]
         raw_items = list(page.get("items") or [])
         cursor = page.get("cursor")
         while cursor:
-            next_payload = await self._execute(
-                _NEXT_ITEMS_QUERY,
-                {"cursor": str(cursor)},
-            )
+            try:
+                next_payload = await self._execute(
+                    _NEXT_ITEMS_QUERY,
+                    {"cursor": str(cursor)},
+                )
+            except MondayAPIError as error:
+                caveats.append(
+                    f"Later page fetch failed ({error.classification}): {error}"
+                )
+                break
             caveats.extend(self._messages(next_payload))
             next_data = next_payload.get("data")
             next_page = (
                 next_data.get("next_items_page") if isinstance(next_data, Mapping) else None
             )
             if not isinstance(next_page, Mapping):
-                raise MondayAPIError(
-                    "monday next items page was malformed",
-                    classification="malformed_response",
-                    retryable=False,
+                caveats.append(
+                    "Later page response was malformed; remaining items were not fetched."
                 )
+                break
             raw_items.extend(next_page.get("items") or [])
             cursor = next_page.get("cursor")
 
         return BoardItemsResult(
             board_id=board_id,
             items=tuple(
-                self._item(raw_item)
+                self._item(raw_item, columns_by_id)
                 for raw_item in raw_items
                 if isinstance(raw_item, Mapping)
             ),

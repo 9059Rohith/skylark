@@ -1,7 +1,7 @@
 """Deterministic deals-pipeline metrics with explicit quality accounting."""
 
 from collections import Counter, defaultdict
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from decimal import Decimal, ROUND_HALF_UP
 
 from app.cleaning.normalizer import normalize_currency, normalize_date, normalize_sector
@@ -90,51 +90,94 @@ def pipeline_health(
 def stage_conversion(
     deals: Sequence[Record], *, stage_order: Sequence[str] = DEFAULT_STAGE_ORDER
 ) -> AnalysisResult:
-    """Compute snapshot funnel conversion from counts that reached each stage."""
+    """Compute a caveated snapshot progression proxy from last observed stages."""
     ordered_stages = tuple(stage_order)
     lookup = {stage.casefold(): index for index, stage in enumerate(ordered_stages)}
-    current_counts = [0 for _ in ordered_stages]
+    observed_last_stage_counts = [0 for _ in ordered_stages]
     exclusions: Counter[str] = Counter()
     for deal in deals:
         stage = text_value(record_value(deal, "stage", "status", "deal_stage"))
         if stage is None:
             exclusions["missing_stage"] += 1
-        elif stage.casefold() == "lost":
-            exclusions["terminal_lost_stage"] += 1
-        elif stage.casefold() not in lookup:
+            continue
+
+        observed_stage = stage
+        if stage.casefold() == "lost":
+            last_reached = text_value(
+                record_value(deal, "last_reached_stage", "last_stage_before_loss")
+            )
+            history = record_value(deal, "stage_history", "stage_history_values")
+            history_was_supplied = last_reached is not None or (
+                isinstance(history, Sequence)
+                and not isinstance(history, (str, bytes))
+                and bool(history)
+            )
+            if last_reached is None and isinstance(history, Sequence) and not isinstance(
+                history, (str, bytes)
+            ):
+                recognized_history: list[str] = []
+                for history_entry in history:
+                    if isinstance(history_entry, Mapping):
+                        entry = text_value(
+                            history_entry.get("stage")
+                            or history_entry.get("status")
+                            or history_entry.get("name")
+                        )
+                    else:
+                        entry = text_value(history_entry)
+                    if entry is not None and entry.casefold() in lookup:
+                        recognized_history.append(entry)
+                if recognized_history:
+                    last_reached = max(
+                        recognized_history, key=lambda value: lookup[value.casefold()]
+                    )
+            if last_reached is None:
+                exclusions[
+                    "unknown_lost_stage_history"
+                    if history_was_supplied
+                    else "lost_without_stage_history"
+                ] += 1
+                continue
+            observed_stage = last_reached
+
+        if observed_stage.casefold() not in lookup:
             exclusions["unknown_stage"] += 1
         else:
-            current_counts[lookup[stage.casefold()]] += 1
+            observed_last_stage_counts[lookup[observed_stage.casefold()]] += 1
 
-    reached_counts = {
-        stage: sum(current_counts[index:])
+    proxy_counts = {
+        stage: sum(observed_last_stage_counts[index:])
         for index, stage in enumerate(ordered_stages)
     }
-    conversion_rates: dict[str, Decimal | None] = {}
+    proxy_rates: dict[str, Decimal | None] = {}
     for index in range(len(ordered_stages) - 1):
         current_stage = ordered_stages[index]
         next_stage = ordered_stages[index + 1]
-        denominator = reached_counts[current_stage]
-        conversion_rates[f"{current_stage}->{next_stage}"] = (
-            (Decimal(reached_counts[next_stage]) * 100 / denominator).quantize(
+        denominator = proxy_counts[current_stage]
+        proxy_rates[f"{current_stage}->{next_stage}"] = (
+            (Decimal(proxy_counts[next_stage]) * 100 / denominator).quantize(
                 _TWO_PLACES, rounding=ROUND_HALF_UP
             )
             if denominator
             else None
         )
-    included = sum(current_counts)
+    included = sum(observed_last_stage_counts)
     return AnalysisResult(
         metrics={
-            "stage_counts": dict(zip(ordered_stages, current_counts, strict=True)),
-            "reached_stage_counts": reached_counts,
-            "conversion_rates": conversion_rates,
+            "observed_last_stage_counts": dict(
+                zip(ordered_stages, observed_last_stage_counts, strict=True)
+            ),
+            "stage_progression_proxy_counts": proxy_counts,
+            "stage_progression_proxy_rates": proxy_rates,
+            "methodology": "snapshot_progression_proxy",
         },
         quality=DataQualityReport(
             total_rows=len(deals),
             included_rows=included,
             exclusions=dict(exclusions),
             normalization_notes=[
-                "Conversion is a snapshot of records at or beyond adjacent ordered stages."
+                "This stage-progression proxy uses current or last observed stage; it is not historical conversion.",
+                "Lost deals without stage history are excluded from proxy denominators and reported as a quality issue.",
             ],
         ),
     )
@@ -154,7 +197,7 @@ def pipeline_by_sector(
         label = sector.value or "Unclassified"
         sectors[label]["deal_count"] = int(sectors[label]["deal_count"]) + 1
         if not sector.is_valid:
-            exclusions[sector.reason or "low_confidence_sector"] += 1
+            exclusions[f"sector:{sector.reason or 'low_confidence_sector'}"] += 1
         amount = _amount(deal, usd_to_inr_rate)
         if amount.is_valid and amount.value is not None:
             sectors[label]["total_value_inr"] = (
@@ -162,15 +205,19 @@ def pipeline_by_sector(
             )
             valid_amounts += 1
         else:
-            exclusions[amount.reason or "invalid_currency"] += 1
+            exclusions[f"amount:{amount.reason or 'invalid_currency'}"] += 1
     return AnalysisResult(
-        metrics={"sectors": {key: sectors[key] for key in sorted(sectors)}},
+        metrics={
+            "sectors": {key: sectors[key] for key in sorted(sectors)},
+            "included_row_basis": "rows_with_valid_amount",
+        },
         quality=DataQualityReport(
             total_rows=len(deals),
             included_rows=valid_amounts,
             exclusions=dict(exclusions),
             normalization_notes=[
-                "Sector aliases and conservative fuzzy matching are applied; uncertain labels remain Unclassified."
+                "Sector aliases and conservative fuzzy matching are applied; uncertain labels remain Unclassified.",
+                "included_rows counts rows with a valid amount; field-scoped sector issues do not independently remove rows.",
             ],
         ),
     )

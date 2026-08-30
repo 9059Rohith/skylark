@@ -42,6 +42,18 @@ def column(column_id: str, title: str, column_type: str, settings: dict[str, Any
     return ColumnSchema(id=column_id, title=title, type=column_type, settings=settings or {})
 
 
+def schema_response() -> FakeResponse:
+    return FakeResponse(
+        {
+            "data": {
+                "boards": [
+                    {"id": "42", "name": "Deals", "columns": []}
+                ]
+            }
+        }
+    )
+
+
 @pytest.mark.parametrize(
     ("raw", "schema", "expected"),
     [
@@ -50,6 +62,7 @@ def column(column_id: str, title: str, column_type: str, settings: dict[str, Any
         ({"id": "amount", "type": "numbers", "text": "1,250", "value": "1250"}, column("amount", "Amount", "numbers"), "1,250"),
         ({"id": "notes", "type": "text", "text": "  signed  ", "value": '"signed"'}, column("notes", "Notes", "text"), "signed"),
         ({"id": "tags", "type": "dropdown", "text": "Energy, Priority", "value": '{"ids": [2, 7]}'}, column("tags", "Tags", "dropdown"), ["Energy", "Priority"]),
+        ({"id": "deal_id", "type": "board_relation", "text": "", "value": '{"linkedPulseIds": [{"linkedPulseId": 123}, {"linkedPulseId": "456"}]}'}, column("deal_id", "Deal", "board_relation"), ["123", "456"]),
         ({"id": "mirror", "type": "mirror", "text": "WO-4, WO-9", "value": '{"display_value": "WO-4, WO-9"}'}, column("mirror", "Work Orders", "mirror"), ["WO-4", "WO-9"]),
     ],
 )
@@ -132,10 +145,74 @@ def test_board_schema_cache_expires_after_fifteen_minutes() -> None:
     assert len(fake.requests) == 2
 
 
+def test_get_board_items_uses_cached_schema_to_resolve_blank_status_text() -> None:
+    """Bypassing board settings loses status labels when monday omits display text."""
+    fake = FakeHTTPClient(
+        [
+            FakeResponse(
+                {
+                    "data": {
+                        "boards": [
+                            {
+                                "id": "42",
+                                "name": "Deals",
+                                "columns": [
+                                    {
+                                        "id": "stage",
+                                        "title": "Stage",
+                                        "type": "status",
+                                        "settings": '{"labels":{"1":"Won"}}',
+                                    }
+                                ],
+                            }
+                        ]
+                    }
+                }
+            ),
+            FakeResponse(
+                {
+                    "data": {
+                        "boards": [
+                            {
+                                "id": "42",
+                                "name": "Deals",
+                                "items_page": {
+                                    "cursor": None,
+                                    "items": [
+                                        {
+                                            "id": "d-1",
+                                            "name": "Acme",
+                                            "column_values": [
+                                                {
+                                                    "id": "stage",
+                                                    "type": "status",
+                                                    "text": "",
+                                                    "value": '{"index": 1}',
+                                                }
+                                            ],
+                                        }
+                                    ],
+                                },
+                            }
+                        ]
+                    }
+                }
+            ),
+        ]
+    )
+    client = GraphQLMondayClient(token="secret", http_client=fake)
+
+    result = asyncio.run(client.get_board_items("42"))
+
+    assert result.items[0].values["stage"] == "Won"
+    assert len(fake.requests) == 2
+
+
 def test_get_board_items_follows_next_page_cursor_and_preserves_partial_errors() -> None:
     """Stopping at page one or discarding partial data silently undercounts boards."""
     fake = FakeHTTPClient(
         [
+            schema_response(),
             FakeResponse(
                 {
                     "data": {
@@ -176,11 +253,86 @@ def test_get_board_items_follows_next_page_cursor_and_preserves_partial_errors()
     assert [item.id for item in result.items] == ["d-1", "d-2"]
     assert result.partial is True
     assert result.caveats == ("one column was unavailable",)
-    assert "items_page(limit: 500)" in fake.requests[0]["json"]["query"]
-    assert fake.requests[0]["json"]["variables"] == {"boardIds": ["42"]}
-    assert fake.requests[1]["json"]["variables"] == {"cursor": "next-1"}
-    assert "limit: 500" in fake.requests[1]["json"]["query"]
-    assert "next_items_page" in fake.requests[1]["json"]["query"]
+    assert "items_page(limit: 500)" in fake.requests[1]["json"]["query"]
+    assert fake.requests[1]["json"]["variables"] == {"boardIds": ["42"]}
+    assert fake.requests[2]["json"]["variables"] == {"cursor": "next-1"}
+    assert "limit: 500" in fake.requests[2]["json"]["query"]
+    assert "next_items_page" in fake.requests[2]["json"]["query"]
+
+
+def test_get_board_items_returns_accumulated_items_when_later_page_retries_fail() -> None:
+    """A later server failure must not discard items already returned by monday."""
+    first_page = FakeResponse(
+        {
+            "data": {
+                "boards": [
+                    {
+                        "id": "42",
+                        "name": "Deals",
+                        "items_page": {
+                            "cursor": "next",
+                            "items": [
+                                {"id": "d-1", "name": "Acme", "column_values": []}
+                            ],
+                        },
+                    }
+                ]
+            }
+        }
+    )
+    fake = FakeHTTPClient(
+        [
+            schema_response(),
+            first_page,
+            FakeResponse({}, status_code=500),
+            FakeResponse({}, status_code=500),
+        ]
+    )
+    client = GraphQLMondayClient(
+        token="secret", http_client=fake, max_attempts=2, sleep=lambda _: asyncio.sleep(0)
+    )
+
+    result = asyncio.run(client.get_board_items("42"))
+
+    assert [item.id for item in result.items] == ["d-1"]
+    assert result.partial is True
+    assert "later page" in result.caveats[-1].casefold()
+    assert "server" in result.caveats[-1].casefold()
+
+
+def test_get_board_items_returns_accumulated_items_for_malformed_later_page() -> None:
+    """A malformed cursor response must become a partial-result caveat after page one."""
+    fake = FakeHTTPClient(
+        [
+            schema_response(),
+            FakeResponse(
+                {
+                    "data": {
+                        "boards": [
+                            {
+                                "id": "42",
+                                "name": "Deals",
+                                "items_page": {
+                                    "cursor": "next",
+                                    "items": [
+                                        {"id": "d-1", "name": "Acme", "column_values": []}
+                                    ],
+                                },
+                            }
+                        ]
+                    }
+                }
+            ),
+            FakeResponse({"data": {"next_items_page": None}}),
+        ]
+    )
+    client = GraphQLMondayClient(token="secret", http_client=fake)
+
+    result = asyncio.run(client.get_board_items("42"))
+
+    assert [item.id for item in result.items] == ["d-1"]
+    assert result.partial is True
+    assert "malformed" in result.caveats[-1].casefold()
 
 
 def test_search_items_filters_normalized_values_across_all_pages() -> None:
@@ -229,7 +381,9 @@ def test_search_items_filters_normalized_values_across_all_pages() -> None:
             }
         ),
     ]
-    client = GraphQLMondayClient(token="secret", http_client=FakeHTTPClient(pages))
+    client = GraphQLMondayClient(
+        token="secret", http_client=FakeHTTPClient([schema_response(), *pages])
+    )
 
     result = asyncio.run(
         client.search_items(
@@ -285,6 +439,7 @@ def test_graphql_retry_in_seconds_is_honored_before_success() -> None:
                     ]
                 }
             ),
+            schema_response(),
             FakeResponse(
                 {
                     "data": {
