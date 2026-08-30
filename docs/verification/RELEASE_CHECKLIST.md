@@ -2,7 +2,7 @@
 
 ## Automated gates
 
-- [x] Backend full pytest suite
+- [x] Backend full pytest suite (192 tests)
 - [x] Backend Ruff and Python compile
 - [x] Frontend Vitest, ESLint, TypeScript, and production build
 - [x] High-severity npm audit
@@ -27,9 +27,10 @@ The captures preserve the concept's dark green editorial palette, lime status/ac
 
 ## Deployment-owner checks
 
-1. Connect the reviewed repository to Render using `render.yaml` and supply every `sync: false` value.
-2. Confirm `/health` reports ready without exposing configuration values.
-3. Deploy `frontend/` to Vercel with server-only `BACKEND_URL`, then restrict backend CORS to that origin.
-4. Exercise all five prompts against copied evaluation boards; compare board item counts and quality exclusions with monday.
-5. Review mobile/desktop, error/partial behavior, and leadership draft-only semantics.
-6. Publish verified public application and repository links by replacing README's pending labels.
+1. [x] Publish the canonical repository at `https://github.com/9059Rohith/skylark`.
+2. [x] Deploy the public FastAPI fallback and Next.js frontend under Rohith's Vercel account.
+3. [x] Verify browser render, prompt submission, frontend proxy, backend SSE contract, and zero browser console errors.
+4. [ ] Import both workbooks into monday and supply the token, two board IDs, and OpenAI key in the backend secret store.
+5. [ ] Confirm `/health` reports ready without exposing configuration values.
+6. [ ] Exercise all five prompts against the live boards; compare item counts and quality exclusions with monday.
+7. [ ] Restrict `CORS_ALLOW_ORIGINS` to the final frontend origin after credentials are configured.

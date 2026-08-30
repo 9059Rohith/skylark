@@ -2,7 +2,8 @@
 
 Skylark Signal is a hosted-ready conversational BI workspace for live, read-only monday.com Deals and Work Orders data. It answers five evaluator archetypes with deterministic arithmetic, explicit source counts, and visible data-quality exclusions; the language model only writes bounded qualitative context.
 
-**Live application:** **[PENDING DEPLOYMENT — owner must connect Render, Vercel, and production secrets]**
+**Live application:** **https://skylark-signal-lac.vercel.app**  
+**Live API:** **https://skylark-signal-api.vercel.app** (`/health` stays degraded until the four production settings below are supplied)
 
 **Source repository:** **https://github.com/9059Rohith/skylark**
 
@@ -28,7 +29,7 @@ parse_intent -> plan_data_needs -> fetch_from_monday -> clean_and_normalize
 monday GraphQL API 2026-07
 ```
 
-The backend is Python 3.11, FastAPI, Pydantic v2, and a hand-rolled LangGraph. The monday boundary is an MCP-compatible tool interface; because no hosted monday MCP endpoint was available for this build, the executable adapter calls monday GraphQL directly. Required boards are fetched concurrently, cursors are followed within a defensive page bound, and live column IDs are mapped from normalized titles and documented aliases. OpenAI `gpt-5.4-mini` is the production default; changing `LLM_PROVIDER` swaps to the optional Anthropic adapter. The frontend is Next.js App Router, TypeScript, and Tailwind. Render runs the backend Docker image and Vercel hosts the frontend.
+The backend is Python 3.11, FastAPI, Pydantic v2, and a hand-rolled LangGraph. The monday boundary is an MCP-compatible tool interface; because no hosted monday MCP endpoint was available for this build, the executable adapter calls monday GraphQL directly. Required boards are fetched concurrently, cursors are followed within a defensive page bound, and live column IDs are mapped from normalized titles and documented aliases. OpenAI `gpt-5.4-mini` is the production default; changing `LLM_PROVIDER` swaps to the optional Anthropic adapter. The frontend is Next.js App Router, TypeScript, and Tailwind. Render Docker remains the intended backend target; the current public instance uses Vercel's official FastAPI runtime because the owner's Render workspace reached its service cap and Railway reported an expired trial.
 
 ## Quick start
 
@@ -107,7 +108,7 @@ The monday client sends `API-Version: 2026-07`, requests up to 500 items per pag
 
 Troubleshooting:
 
-- **Health is degraded:** confirm board IDs/token and the selected provider key in `backend/.env` or the Render secret store.
+- **Health is degraded:** confirm board IDs/token and the selected provider key in `backend/.env`, Render, or the `skylark-signal-api` Vercel project's production environment.
 - **Board/schema error:** verify board IDs, token visibility, and column titles against [data-setup/board_schema.md](data-setup/board_schema.md); restart once after title changes to refresh the schema cache.
 - **Clarification repeats:** answer the exact sector/scope choice; start a new conversation to discard prior scope.
 - **Partial result:** monday returned usable earlier pages but a later page failed. Retry; do not treat the item count as complete.
@@ -133,16 +134,18 @@ Run `docker compose config` and `docker compose build` before release. The machi
 
 ## Deploy for evaluation
 
-1. Push the reviewed repository to GitHub.
-2. In Render, create a Blueprint from `render.yaml`; enter all `sync: false` secrets and wait for `/health` to become ready.
-3. In Vercel, import `frontend/`, set server-only `BACKEND_URL` to the verified Render service origin, and deploy.
-4. Update Render `CORS_ALLOW_ORIGINS` to the exact Vercel origin, redeploy, then exercise all five prompts and mobile/desktop layouts.
-5. Replace the two pending labels at the top only after independently opening both public links.
+The canonical repository is `https://github.com/9059Rohith/skylark`. The preferred topology is:
+
+1. In Render, create a Blueprint from `render.yaml`; enter all `sync: false` secrets and wait for `/health` to become ready.
+2. In Vercel, import `frontend/`, set server-only `BACKEND_URL` to the verified Render service origin, and deploy.
+3. Update Render `CORS_ALLOW_ORIGINS` to the exact Vercel origin, redeploy, then exercise all five prompts and mobile/desktop layouts.
+
+The currently hosted fallback uses two Rohith-owned Vercel projects: `skylark-signal-api` (root `backend/`) and `skylark-signal` (root `frontend/`). Add `MONDAY_API_TOKEN`, both board IDs, `LLM_PROVIDER=openai`, and `OPENAI_API_KEY` to the backend project's **Production** environment; keep `BACKEND_URL=https://skylark-signal-api.vercel.app` in the frontend project. Redeploy the backend, confirm `/health` is HTTP 200/`ready`, then redeploy the frontend. Secrets must never be pasted into issues, commits, or client-side variables.
 
 ## AI-tool disclosure and limitations
 
 OpenAI Codex/GPT-5-family coding assistance was used to implement, test, and review the repository; image generation was used for a visual concept reference. No Claude API was used during the build. A human supplied the requirements, approved OpenAI as the default because no Anthropic key was available, and remains responsible for credential scope, deployment, live-data validation, and publication.
 
-Known limitations: no public deployment can be completed without the owner's hosting accounts and secrets; monday imports are one-time manual setup; dirty repeated-header rows remain visible as quality exclusions; live schema/type changes may require cache refresh; in-memory sessions are single-process; normalized deal-name/client fallback can be ambiguous; currency conversion needs an explicit rate; no authentication layer is bundled for the prototype; and leadership updates are draft-only.
+Known limitations: the public UI/API are deployed, but live BI remains intentionally unavailable until the owner imports the two boards and supplies the four production settings; monday imports are one-time manual setup; dirty repeated-header rows remain visible as quality exclusions; live schema/type changes may require cache refresh; in-memory sessions are single-process; normalized deal-name/client fallback can be ambiguous; currency conversion needs an explicit rate; no authentication layer is bundled for the prototype; and leadership updates are draft-only.
 
 See [DECISION_LOG.md](DECISION_LOG.md) for the concise implementation rationale.
