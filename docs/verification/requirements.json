@@ -12,11 +12,11 @@
     {"id": "work_order_completion", "prompt": "What is average work order completion time?", "backend_test": "backend/tests/test_release_archetypes.py", "frontend_test": "frontend/components/__tests__/ChatWindow.test.tsx"},
     {"id": "data_quality", "prompt": "How many deals are missing close dates?", "backend_test": "backend/tests/test_release_archetypes.py", "frontend_test": "frontend/components/__tests__/ChatWindow.test.tsx"},
     {"id": "leadership_update", "prompt": "Draft the weekly leadership update", "backend_test": "backend/tests/test_release_archetypes.py", "frontend_test": "frontend/components/__tests__/ChatWindow.test.tsx", "safety": "draft-only; no send/write action"},
-    {"id": "hosted_prototype", "evidence": ["backend/Dockerfile", "frontend/Dockerfile", "docker-compose.yml", "render.yaml"], "status": "artifacts complete; owner deployment externally blocked"},
+    {"id": "hosted_prototype", "evidence": ["https://skylark-signal-lac.vercel.app", "https://skylark-signal-api.vercel.app/health", "backend/Dockerfile", "frontend/Dockerfile", "docker-compose.yml", "render.yaml"], "status": "public production frontend and backend ready; verified 2026-08-30"},
     {"id": "source_and_readme", "evidence": ["README.md", "SECURITY.md", ".github/workflows/ci.yml"]},
     {"id": "decision_log_max_two_pages", "evidence": ["DECISION_LOG.md"], "verification": "660 words; under 900-word budget"},
     {"id": "ai_tool_disclosure", "evidence": ["README.md", "DECISION_LOG.md"]},
     {"id": "desktop_mobile_fidelity", "evidence": ["docs/verification/screenshots/desktop.png", "docs/verification/screenshots/mobile.png", "docs/verification/RELEASE_CHECKLIST.md"]}
   ],
-  "external_blockers": ["production monday/LLM secrets", "Render and Vercel account ownership", "public repository publication"]
+  "external_blockers": []
 }

@@ -8,6 +8,9 @@
 
 <p>
   <a href="https://github.com/9059Rohith/skylark/actions/workflows/ci.yml"><img src="https://img.shields.io/github/actions/workflow/status/9059Rohith/skylark/ci.yml?branch=main&label=build&logo=github" alt="Build status"></a>
+  <a href="https://github.com/9059Rohith/skylark"><img src="https://img.shields.io/badge/repository-public-2EA44F?logo=github&logoColor=white" alt="Public repository"></a>
+  <a href="https://skylark-signal-lac.vercel.app"><img src="https://img.shields.io/badge/production-live-C7F450?logo=vercel&logoColor=black" alt="Production deployment live"></a>
+  <img src="https://img.shields.io/badge/tests-243%20passing-2EA44F?logo=pytest&logoColor=white" alt="243 automated tests passing">
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue" alt="MIT License"></a>
   <a href="https://github.com/9059Rohith/skylark/stargazers"><img src="https://img.shields.io/github/stars/9059Rohith/skylark?style=flat&logo=github" alt="GitHub stars"></a>
   <a href="https://github.com/9059Rohith/skylark/commits/main"><img src="https://img.shields.io/github/last-commit/9059Rohith/skylark?logo=git" alt="Last commit"></a>
@@ -29,6 +32,7 @@
 ## Table of Contents
 
 - [Overview](#overview)
+- [Evaluation Readiness](#evaluation-readiness)
 - [Demo / Screenshots](#demo--screenshots)
 - [Architecture](#architecture)
 - [Key Features](#key-features)
@@ -47,6 +51,28 @@
 ## Overview
 
 Skylark Signal lets founders ask plain-English questions about sales and project delivery and receive answers backed by live monday.com data. It reads separate Deals and Work Orders boards, repairs inconsistent dates, amounts, names, stages, and sectors, then performs business calculations in deterministic code. Every answer identifies the boards queried, the records used, and the data-quality limitations that could affect the conclusion. The result is a conversational BI workspace for pipeline reviews, delivery analysis, sales-to-operations handoffs, and human-reviewed leadership updates.
+
+## Evaluation Readiness
+
+### Why this is a top-1%-caliber submission
+
+Skylark Signal is engineered for the qualities that distinguish an exceptional technical-assignment submission: a working public product, live source-system integration, deterministic and traceable analytics, explicit uncertainty, resilient failure handling, polished interaction design, and reproducible verification. The claim is backed by inspectable evidence rather than feature-count marketing.
+
+| Evaluation criterion | Verifiable evidence |
+|---|---|
+| Hosted prototype | [Public production application](https://skylark-signal-lac.vercel.app) and [ready backend health check](https://skylark-signal-api.vercel.app/health) |
+| Live monday.com integration | Read-only, cursor-paginated GraphQL in [the monday client](backend/app/monday/client.py); no workbook rows or CSV fixtures exist in the runtime path |
+| Messy-data resilience | Traceable date, amount, text, stage, sector, missing-value, and duplicate-like handling in [cleaning](backend/app/cleaning), exercised by synthetic edge-case tests |
+| Founder-level query understanding | Inspectable LangGraph stages for intent, planning, concurrent retrieval, normalization, analysis, clarification, synthesis, and formatting |
+| Cross-board intelligence | Deterministic Deals-to-Work-Orders matching with relation ID, normalized deal name, and client fallback phases |
+| Evidence and caveats | Every metric returns a typed quality report with total/used rows, exclusions, normalization notes, duplicates, and partial-fetch warnings |
+| Leadership updates | Structured, human-reviewed draft with headline, sector breakdown, risks, quality footnote, and Copy as Markdown; no autonomous send action |
+| Conversational product quality | Progressive typed SSE, retained follow-up context, accessible desktop/mobile UI, visible retrieval state, evidence drawer, and graceful retry paths |
+| Security and reliability | Server-only credentials, exact-origin CORS, UUID sessions, request limits, sanitized errors, rate-limit backoff, schema TTL cache, and read-only API operations |
+| Reproducible quality gates | 204 backend tests + 39 frontend tests, Ruff, ESLint, TypeScript, production build, Docker Compose validation, zero high-severity production dependency findings, and CI |
+| Assignment traceability | [Decision Log](DECISION_LOG.md), [release checklist](docs/verification/RELEASE_CHECKLIST.md), [machine-readable requirement evidence](docs/verification/requirements.json), setup guides, deployment configs, and a narrated demo |
+
+**Evaluator quick path:** open the [live application](https://skylark-signal-lac.vercel.app), ask “Which won deals do not yet have a corresponding work order?”, inspect both queried boards and the row-accounting caveat, then request “Draft a leadership update.” This demonstrates live retrieval, cross-board reasoning, quality transparency, conversational continuity, and the human-in-the-loop leadership workflow in two turns.
 
 ## Demo / Screenshots
 

@@ -29,7 +29,7 @@ The captures preserve the concept's dark green editorial palette, lime status/ac
 
 ## Deployment-owner checks
 
-1. [ ] Make the canonical repository at `https://github.com/9059Rohith/skylark` public; deployment is complete, but unauthenticated access currently returns `404`.
+1. [x] Canonical repository at `https://github.com/9059Rohith/skylark` is public and returns `200` without authentication (verified 2026-08-30).
 2. [x] Deploy the public FastAPI fallback and Next.js frontend under Rohith's Vercel account.
 3. [x] Verify browser render, prompt submission, frontend proxy, backend SSE contract, and zero browser console errors.
 4. [x] Import both workbooks into monday and supply the token, two board IDs, and OpenAI key in the backend secret store.
