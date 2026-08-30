@@ -2,9 +2,9 @@
 
 <div align="center">
 
-# Skylark Signal
+<h1 id="skylark-signal">Skylark Signal</h1>
 
-**Ask the business. See the evidence.**
+<p><strong>Ask the business. See the evidence.</strong></p>
 
 <p>
   <a href="https://github.com/9059Rohith/skylark/actions/workflows/ci.yml"><img src="https://img.shields.io/github/actions/workflow/status/9059Rohith/skylark/ci.yml?branch=main&label=build&logo=github" alt="Build status"></a>
@@ -22,7 +22,7 @@
   <img src="https://img.shields.io/badge/Docker-ready-2496ED?logo=docker&logoColor=white" alt="Docker ready">
 </p>
 
-![Poster](assets/poster.png)
+<img src="assets/poster.png" width="100%" alt="Skylark Signal conversational business intelligence workspace">
 
 </div>
 
@@ -52,12 +52,14 @@ Skylark Signal lets founders ask plain-English questions about sales and project
 
 <div align="center">
 
-### Product walkthrough
+<h3>Product walkthrough</h3>
 
 <video src="assets/demo.mp4" controls width="100%"></video>
 
-[▶ Watch the 2:55 narrated demo on Google Drive](https://drive.google.com/file/d/1E8SA5xP8uwA5afZlIonnkNX6DXlBPFro/view?usp=sharing)
-· [Download the repository copy](assets/demo.mp4)
+<p>
+  <a href="https://drive.google.com/file/d/1E8SA5xP8uwA5afZlIonnkNX6DXlBPFro/view?usp=sharing">▶ Watch the 2:55 narrated demo on Google Drive</a>
+  · <a href="assets/demo.mp4">Download the repository copy</a>
+</p>
 
 <br>
 
@@ -91,45 +93,46 @@ Skylark Signal lets founders ask plain-English questions about sales and project
 ## Architecture
 
 ```mermaid
-flowchart TD
-    U[Founder or executive] -->|HTTPS| UI[Next.js 16 App Router UI]
-    UI -->|POST /api/chat| PX[Server-only streaming proxy]
-    PX -->|POST /chat · SSE| API[FastAPI backend]
+graph TD;
+    U["Founder or executive"] -->|HTTPS| UI["Next.js 16 App Router UI"];
+    UI -->|POST /api/chat| PX["Server-only streaming proxy"];
+    PX -->|POST /chat and SSE| API["FastAPI backend"];
 
-    API --> LG[LangGraph StateGraph]
-    LG <--> CP[(Bounded in-memory checkpoints)]
-    LG --> RT[Intent and data-needs routing]
-    LG --> MT[monday tool boundary]
-    MT -->|GraphQL queries · read only| MON[(monday.com API)]
-    MON --> DB[(Deals board)]
-    MON --> WO[(Work Orders board)]
+    API --> LG["LangGraph StateGraph"];
+    LG -->|Read and write session state| CP["Bounded in-memory checkpoints"];
+    CP -->|Conversation context| LG;
+    LG --> RT["Intent and data-needs routing"];
+    LG --> MT["monday tool boundary"];
+    MT -->|Read-only GraphQL queries| MON["monday.com API"];
+    MON --> DB["Deals board"];
+    MON --> WO["Work Orders board"];
 
-    LG --> CL[Cleaning and normalization]
-    CL --> BI[Deterministic BI services]
-    BI --> DQ[DataQualityReport]
-    BI --> LU[Leadership update builder]
-    LG -->|Bounded aggregate context| LLM[OpenAI Responses API]
-    LLM -->|Executive-language synthesis| LG
-    LG -->|status · sources · caveats · tokens| API
+    LG --> CL["Cleaning and normalization"];
+    CL --> BI["Deterministic BI services"];
+    BI --> DQ["DataQualityReport"];
+    BI --> LU["Leadership update builder"];
+    LG -->|Bounded aggregate context| LLM["OpenAI Responses API"];
+    LLM -->|Executive-language synthesis| LG;
+    LG -->|Typed SSE events| API;
 ```
 
 The browser communicates only with the Next.js server route, so monday.com and model credentials never enter client-side JavaScript. FastAPI owns validation and typed Server-Sent Events; LangGraph coordinates routing, retrieval, cleaning, deterministic analysis, clarification, and response synthesis. The application has no persistent database: bounded in-memory checkpoints retain short-lived conversation context, while monday.com remains the live source of truth. OpenAI is the default synthesis provider, with an environment-selected Anthropic adapter available without changing the graph.
 
 ```mermaid
-flowchart LR
-    Q[Business question] --> PI[parse_intent]
-    PI --> PD[plan_data_needs]
-    PD -->|Ambiguous| CQ[clarify with one question]
-    PD -->|Resolved| FM[fetch_from_monday]
-    FM -->|Concurrent reads| D[Deals]
-    FM -->|Concurrent reads| W[Work Orders]
-    D --> CN[clean_and_normalize]
-    W --> CN
-    CN --> AN[analyze]
-    AN --> QA[Numeric result plus quality report]
-    QA --> SA[synthesize_answer]
-    SA --> FR[format_response]
-    FR --> SSE[Typed SSE stream]
+graph LR;
+    Q["Business question"] --> PI["parse_intent"];
+    PI --> PD["plan_data_needs"];
+    PD -->|Ambiguous| CQ["clarify with one question"];
+    PD -->|Resolved| FM["fetch_from_monday"];
+    FM -->|Concurrent reads| D["Deals"];
+    FM -->|Concurrent reads| W["Work Orders"];
+    D --> CN["clean_and_normalize"];
+    W --> CN;
+    CN --> AN["analyze"];
+    AN --> QA["Numeric result plus quality report"];
+    QA --> SA["synthesize_answer"];
+    SA --> FR["format_response"];
+    FR --> SSE["Typed SSE stream"];
 ```
 
 The data pipeline preserves original values for traceability, normalizes only through documented rules, and never drops an entire record because one field is missing. Metrics use the valid subset required for each calculation and return their own quality report before any model-written explanation is produced.
@@ -474,8 +477,8 @@ The spreadsheet files are used only for a one-time manual import into monday.com
 
 <div align="center">
 
-Made with ❤️ by [Rohith](https://github.com/9059Rohith)
+<p>Made with ❤️ by <a href="https://github.com/9059Rohith">Rohith</a></p>
 
-[⭐ Star this repository](https://github.com/9059Rohith/skylark) · [Back to top](#skylark-signal)
+<p><a href="https://github.com/9059Rohith/skylark">⭐ Star this repository</a> · <a href="#skylark-signal">Back to top</a></p>
 
 </div>
