@@ -56,7 +56,8 @@ Skylark Signal lets founders ask plain-English questions about sales and project
 
 <video src="assets/demo.mp4" controls width="100%"></video>
 
-[Download or watch the 2:55 narrated demo](assets/demo.mp4)
+[▶ Watch the 2:55 narrated demo on Google Drive](https://drive.google.com/file/d/1E8SA5xP8uwA5afZlIonnkNX6DXlBPFro/view?usp=sharing)
+· [Download the repository copy](assets/demo.mp4)
 
 <br>
 
