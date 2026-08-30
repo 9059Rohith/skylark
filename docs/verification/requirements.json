@@ -1,0 +1,21 @@
+{
+  "schema_version": 1,
+  "generated_for": "Skylark Signal release verification",
+  "requirements": [
+    {"id": "live_read_only_monday", "evidence": ["backend/app/monday/client.py", "SECURITY.md", "backend/tests/test_monday_client.py"]},
+    {"id": "manual_board_import", "evidence": ["data-setup/import_instructions.md", "data-setup/board_schema.md"]},
+    {"id": "messy_data_traceability", "evidence": ["backend/app/cleaning", "backend/app/intelligence", "backend/tests/test_normalizer.py", "backend/tests/test_intelligence.py"]},
+    {"id": "conversational_bi", "evidence": ["backend/app/agent/graph.py", "frontend/components/ChatWindow.tsx", "backend/tests/test_agent_graph.py"]},
+    {"id": "pipeline_health", "prompt": "How healthy is our pipeline?", "backend_test": "backend/tests/test_release_archetypes.py", "frontend_test": "frontend/components/__tests__/ChatWindow.test.tsx"},
+    {"id": "won_without_work_orders", "prompt": "Which won deals have no work orders?", "backend_test": "backend/tests/test_release_archetypes.py", "frontend_test": "frontend/components/__tests__/ChatWindow.test.tsx"},
+    {"id": "work_order_completion", "prompt": "What is average work order completion time?", "backend_test": "backend/tests/test_release_archetypes.py", "frontend_test": "frontend/components/__tests__/ChatWindow.test.tsx"},
+    {"id": "data_quality", "prompt": "How many deals are missing close dates?", "backend_test": "backend/tests/test_release_archetypes.py", "frontend_test": "frontend/components/__tests__/ChatWindow.test.tsx"},
+    {"id": "leadership_update", "prompt": "Draft the weekly leadership update", "backend_test": "backend/tests/test_release_archetypes.py", "frontend_test": "frontend/components/__tests__/ChatWindow.test.tsx", "safety": "draft-only; no send/write action"},
+    {"id": "hosted_prototype", "evidence": ["backend/Dockerfile", "frontend/Dockerfile", "docker-compose.yml", "render.yaml"], "status": "artifacts complete; owner deployment externally blocked"},
+    {"id": "source_and_readme", "evidence": ["README.md", "SECURITY.md", ".github/workflows/ci.yml"]},
+    {"id": "decision_log_max_two_pages", "evidence": ["DECISION_LOG.md"], "verification": "660 words; under 900-word budget"},
+    {"id": "ai_tool_disclosure", "evidence": ["README.md", "DECISION_LOG.md"]},
+    {"id": "desktop_mobile_fidelity", "evidence": ["docs/verification/screenshots/desktop.png", "docs/verification/screenshots/mobile.png", "docs/verification/RELEASE_CHECKLIST.md"]}
+  ],
+  "external_blockers": ["production monday/LLM secrets", "Render and Vercel account ownership", "public repository publication"]
+}

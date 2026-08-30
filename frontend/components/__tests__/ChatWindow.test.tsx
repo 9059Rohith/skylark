@@ -15,6 +15,60 @@ function sseResponse(chunks: string[]) {
   );
 }
 
+const releaseArchetypes = [
+  ["pipeline_health", "How healthy is our pipeline?", "Pipeline answer."],
+  ["won_without_work_orders", "Which won deals have no work orders?", "Gap answer."],
+  ["work_order_completion", "What is average work order completion time?", "Completion answer."],
+  ["data_quality", "How many deals are missing close dates?", "Quality answer."],
+] as const;
+
+it.each(releaseArchetypes)("renders the mocked %s archetype through the chat UI", async (intent, prompt, answer) => {
+  const user = userEvent.setup();
+  const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(sseResponse([
+    'event: sources\ndata: {"event":"sources","sources":[{"board_id":"101","board_name":"Deals","item_count":2,"partial":false,"error":null}]}\n\n',
+    `event: token\ndata: ${JSON.stringify({ event: "token", token: answer })}\n\n`,
+    `event: done\ndata: ${JSON.stringify({ event: "done", session_id: "x", intent })}\n\n`,
+  ]));
+  render(<ChatWindow />);
+
+  await user.type(screen.getByRole("textbox"), prompt);
+  await user.click(screen.getByRole("button", { name: /send message/i }));
+
+  expect(await screen.findByText(answer)).toBeVisible();
+  expect(screen.getByRole("heading", { name: "Deals" })).toBeVisible();
+  const body = JSON.parse(fetchMock.mock.calls[0]?.[1]?.body as string);
+  expect(body.message).toBe(prompt);
+});
+
+it("renders the mocked leadership-update archetype as a reviewable draft", async () => {
+  const user = userEvent.setup();
+  const leadership = {
+    headline_pipeline_value_inr: "21000000",
+    sector_breakdown: [{ sector: "Energy", deal_count: 1, pipeline_value_inr: "20000000" }],
+    notable_at_risk: [],
+    quality: {
+      pipeline: { total_rows: 2, included_rows: 2, exclusions: {}, normalization_notes: [], duplicate_records: [] },
+      sector: { total_rows: 2, included_rows: 2, exclusions: {}, normalization_notes: [], duplicate_records: [] },
+      gaps: { total_rows: 3, included_rows: 2, exclusions: { not_won: 1 }, normalization_notes: [], duplicate_records: [] },
+      operational_risks: { total_rows: 1, included_rows: 1, exclusions: {}, normalization_notes: [], duplicate_records: [] },
+    },
+    quality_footnote: "All headline rows were usable.",
+    markdown: "# Leadership update (draft)",
+  };
+  vi.spyOn(globalThis, "fetch").mockResolvedValue(sseResponse([
+    `event: leadership_update\ndata: ${JSON.stringify({ event: "leadership_update", leadership_update: leadership })}\n\n`,
+    'event: token\ndata: {"event":"token","token":"Leadership draft ready."}\n\n',
+    'event: done\ndata: {"event":"done","session_id":"x","intent":"leadership_update"}\n\n',
+  ]));
+  render(<ChatWindow />);
+
+  await user.type(screen.getByRole("textbox"), "Draft the weekly leadership update");
+  await user.click(screen.getByRole("button", { name: /send message/i }));
+
+  expect(await screen.findByRole("region", { name: "Leadership update" })).toBeVisible();
+  expect(screen.getByRole("button", { name: /copy as markdown/i })).toBeEnabled();
+});
+
 it("streams a turn, shows progress, preserves session continuity, and restores focus", async () => {
   const user = userEvent.setup();
   const fetchMock = vi

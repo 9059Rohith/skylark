@@ -2,13 +2,13 @@
 
 ## Outcome
 
-Build a deployable conversational BI workspace that reads live Deals and Work Orders from monday.com, normalizes messy values without hiding uncertainty, computes deterministic business metrics, and uses Claude only to interpret and explain results. Every answer exposes its board provenance and a structured data-quality report.
+Build a deployable conversational BI workspace that reads live Deals and Work Orders from monday.com, normalizes messy values without hiding uncertainty, computes deterministic business metrics, and uses a provider-swappable language model only to interpret and explain results. OpenAI `gpt-5.4-mini` is the user-authorized production default because no Anthropic key was available; Anthropic remains optional. Every answer exposes its board provenance and a structured data-quality report.
 
 ## Architecture
 
 The Python 3.11 backend is a FastAPI service. A hand-built LangGraph runs `parse_intent -> plan_data_needs -> fetch_from_monday -> clean_and_normalize -> analyze -> synthesize_answer -> format_response`, with a conditional `clarify` terminal. Independent board reads run concurrently. A typed `MondayClient` boundary supports an official-hosted-MCP adapter shape and a production GraphQL transport; GraphQL is the executable fallback because this build environment has neither monday credentials nor a configured MCP session. The transport remains read-only and normalizes monday column-value variants before cleaning.
 
-Deterministic intelligence functions own arithmetic. Claude receives compact aggregate facts, lineage, and caveats—not an instruction to invent metrics. Conversation state is keyed by caller-provided session ID through a LangGraph checkpointer. Production can use Postgres when configured; local use is in-memory.
+Deterministic intelligence functions own arithmetic. The selected provider receives compact aggregate facts, lineage, and caveats—not an instruction to invent metrics. Conversation state is keyed by caller-provided session ID through a LangGraph checkpointer. Production can use Postgres when configured; local use is in-memory.
 
 The Next.js App Router frontend is one responsive product surface: a focused chat, an evidence rail, streaming progress, expandable caveats, and a draft leadership-update card. The accepted reference is `docs/design/skylark-signal-concept.png`. The visual system uses an ink background, elevated green-charcoal surfaces, parchment text, restrained acid-lime accents, amber caveats, editorial headings, and compact UI typography.
 
@@ -36,4 +36,4 @@ Backend tests cover normalization, quality accounting, routing, intelligence, mo
 
 ## Delivery truthfulness
 
-Local, Docker, Render, and Vercel artifacts must be complete. A public URL cannot be truthfully created without the user's monday/Anthropic credentials and hosting accounts; this is documented as the only external deployment blocker rather than replaced with a fake URL.
+Local, Docker, Render, and Vercel artifacts must be complete. A public URL cannot be truthfully created without the user's monday/selected-LLM credentials and hosting accounts; this is documented as the only external deployment blocker rather than replaced with a fake URL.

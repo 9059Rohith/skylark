@@ -2,11 +2,11 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Deliver a production-ready monday.com conversational BI application with traceable deterministic metrics, Claude synthesis, streaming chat, and deployment documentation.
+**Goal:** Deliver a production-ready monday.com conversational BI application with traceable deterministic metrics, provider-swappable LLM synthesis, streaming chat, and deployment documentation.
 
 **Architecture:** FastAPI and a typed monday transport feed a hand-built LangGraph whose nodes separate intent, retrieval, normalization, analysis, and synthesis. A Next.js App Router client consumes typed SSE and renders a responsive evidence-first chat workspace.
 
-**Tech Stack:** Python 3.11, FastAPI, Pydantic v2, LangGraph, Anthropic SDK, HTTPX, RapidFuzz, pytest; Next.js, React, TypeScript, Tailwind, Vitest; Docker, Render, Vercel.
+**Tech Stack:** Python 3.11, FastAPI, Pydantic v2, LangGraph, OpenAI Responses API by default with an optional Anthropic adapter, HTTPX, RapidFuzz, pytest; Next.js, React, TypeScript, Tailwind, Vitest; Docker, Render, Vercel. The user authorized the OpenAI default (`gpt-5.4-mini`) because no Anthropic key was available.
 
 **Spec:** `docs/superpowers/specs/2026-08-30-skylark-signal-design.md`
 
@@ -50,7 +50,7 @@
 
 - [ ] Write failing routing, graph-node, leadership-output, and streaming API tests.
 - [ ] Verify red state.
-- [ ] Implement explicit routes, concurrent fetch, checkpointed state, Claude structured parsing/synthesis with deterministic fallback, and SSE formatting.
+- [ ] Implement explicit routes, concurrent fetch, checkpointed state, provider-swappable structured parsing/synthesis with deterministic fallback, and SSE formatting.
 - [ ] Run all backend tests and static checks.
 
 ### Task 4: Frontend product surface

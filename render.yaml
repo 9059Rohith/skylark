@@ -1,0 +1,26 @@
+services:
+  - type: web
+    name: skylark-signal-api
+    runtime: docker
+    dockerfilePath: ./backend/Dockerfile
+    dockerContext: .
+    healthCheckPath: /health
+    maxShutdownDelaySeconds: 30
+    autoDeployTrigger: checksPass
+    envVars:
+      - key: PORT
+        value: "10000"
+      - key: LLM_PROVIDER
+        value: openai
+      - key: OPENAI_MODEL
+        value: gpt-5.4-mini
+      - key: MONDAY_API_TOKEN
+        sync: false
+      - key: MONDAY_DEALS_BOARD_ID
+        sync: false
+      - key: MONDAY_WORK_ORDERS_BOARD_ID
+        sync: false
+      - key: OPENAI_API_KEY
+        sync: false
+      - key: CORS_ALLOW_ORIGINS
+        sync: false

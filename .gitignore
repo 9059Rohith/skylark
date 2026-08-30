@@ -10,7 +10,10 @@ node_modules/
 .next/
 coverage/
 htmlcov/
+*.log
+.coverage
+playwright-report/
+test-results/
 .superpowers/
 *.db
 *.sqlite3
-
