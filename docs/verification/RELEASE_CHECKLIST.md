@@ -9,7 +9,7 @@
 - [x] Five mocked archetypes through FastAPI SSE; frontend reducers/components exercised with synthetic SSE
 - [x] Next.js proxy preserves a progressively delivered upstream SSE body
 - [x] Compose, JSON, and YAML validation
-- [ ] Container builds — blocked locally because Docker Desktop's Linux engine is not running
+- [x] Backend and standalone frontend container builds; production images smoke-tested (backend readiness `503` without secrets, frontend `200`)
 - [x] Credential/placeholder scan and `git diff --check`
 
 Record exact commands and results in the ignored Task 5 report before committing.
